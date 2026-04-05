@@ -32,6 +32,14 @@ services:
     environment:
       # Python logging
       PYTHONUNBUFFERED: "1"
+      # InfluxDB Configuration
+      INFLUXDB_URL: ${INFLUXDB_URL:-http://influxdb:8086}
+      INFLUXDB_TOKEN: ${INFLUXDB_TOKEN:-my-admin-token}
+      INFLUXDB_ORG: ${INFLUXDB_ORG:-myorg}
+      INFLUXDB_BUCKET: ${INFLUXDB_BUCKET:-sensors}
+      # MongoDB Configuration
+      MONGODB_URL: ${MONGODB_URL:-mongodb://admin:changeme@mongodb:27017/}
+      MONGODB_DB: ${MONGODB_DB:-digital_twin}
 
   # ============================================================================
   # Frontend Service (React + Nginx)
@@ -93,9 +101,55 @@ services:
       start_period: 40s
 
   # ============================================================================
-  # Grafana - Metrics Visualization & Dashboards
+  # InfluxDB - Time-Series Database for Sensor Data
   # ============================================================================
-  grafana:
+  influxdb:
+    image: influxdb:2.7-alpine
+    ports:
+      - "8086:8086"
+    networks:
+      - campus
+    volumes:
+      - influxdb_data:/var/lib/influxdb2
+    environment:
+      INFLUXDB_DB: sensors
+      INFLUXDB_ADMIN_USER: admin
+      INFLUXDB_ADMIN_PASSWORD: changeme
+      INFLUXDB_HTTP_AUTH_ENABLED: "true"
+      INFLUXDB_INITIAL_BUCKET: sensors
+      INFLUXDB_INITIAL_ORG: myorg
+      INFLUXDB_INITIAL_RETENTION: 30d
+      INFLUXDB_INITIAL_ADMIN_TOKEN: my-admin-token-change-me
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8086/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ============================================================================
+  # MongoDB - Document Database for Alerts & Metadata
+  # ============================================================================
+  mongodb:
+    image: mongo:7.0-alpine
+    ports:
+      - "27017:27017"
+    networks:
+      - campus
+    volumes:
+      - mongodb_data:/data/db
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: admin
+      MONGO_INITDB_ROOT_PASSWORD: changeme
+      MONGO_INITDB_DATABASE: digital_twin
+    restart: unless-stopped
+    healthcheck:
+      test: echo 'db.runCommand("ping").ok' | mongosh localhost:27017/test --quiet
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ============================================================================
     image: grafana/grafana:latest
     ports:
       - "3001:3000"  # Note: Grafana runs on 3000 internally, exposed on 3001 externally
@@ -137,5 +191,9 @@ volumes:
   prometheus_data:
     driver: local
   grafana_data:
+    driver: local
+  influxdb_data:
+    driver: local
+  mongodb_data:
     driver: local
 

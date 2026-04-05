@@ -8,15 +8,20 @@ Features:
 - System health tracking
 - Prometheus metrics (request counter, active mode gauge)
 """
+import os
 import random
 import threading
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Literal
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from prometheus_client import Counter, Gauge, generate_latest, CollectorRegistry
+from influxdb_client import InfluxDBClient
+from influxdb_client.client.write_api import SYNCHRONOUS
+from pymongo import MongoClient
+from pymongo.errors import ConnectionFailure
 
 # ============================================================================
 # TYPE DEFINITIONS
@@ -125,6 +130,115 @@ app.add_middleware(
 )
 
 # ============================================================================
+# DATABASE INITIALIZATION
+# ============================================================================
+# InfluxDB connection
+INFLUXDB_URL = os.getenv("INFLUXDB_URL", "http://influxdb:8086")
+INFLUXDB_TOKEN = os.getenv("INFLUXDB_TOKEN", "my-admin-token")
+INFLUXDB_ORG = os.getenv("INFLUXDB_ORG", "myorg")
+INFLUXDB_BUCKET = os.getenv("INFLUXDB_BUCKET", "sensors")
+
+influxdb_client = None
+influxdb_write_api = None
+
+try:
+    influxdb_client = InfluxDBClient(
+        url=INFLUXDB_URL,
+        token=INFLUXDB_TOKEN,
+        org=INFLUXDB_ORG,
+        timeout=5000,
+    )
+    influxdb_write_api = influxdb_client.write_api(write_type=SYNCHRONOUS)
+    # Verify connection
+    influxdb_client.ping()
+    print("[✓] InfluxDB connected successfully")
+except Exception as e:
+    print(f"[!] InfluxDB connection failed: {e}. Will use simulation only.")
+    influxdb_client = None
+    influxdb_write_api = None
+
+# MongoDB connection
+MONGODB_URL = os.getenv("MONGODB_URL", "mongodb://admin:changeme@mongodb:27017/")
+MONGODB_DB = os.getenv("MONGODB_DB", "digital_twin")
+
+mongodb_client = None
+mongodb_db = None
+
+try:
+    mongodb_client = MongoClient(MONGODB_URL, serverSelectionTimeoutMS=5000)
+    mongodb_client.admin.command("ping")  # Test connection
+    mongodb_db = mongodb_client[MONGODB_DB]
+    print("[✓] MongoDB connected successfully")
+except ConnectionFailure as e:
+    print(f"[!] MongoDB connection failed: {e}. Alerts will be stored in memory only.")
+    mongodb_client = None
+    mongodb_db = None
+
+# ============================================================================
+# DATABASE HELPER FUNCTIONS
+# ============================================================================
+def write_telemetry_to_influxdb(telemetry: dict, mode: SimulationMode) -> bool:
+    """Write telemetry data to InfluxDB."""
+    if not influxdb_write_api or not influxdb_client:
+        return False
+    
+    try:
+        point = f"telemetry,mode={mode} temperature={telemetry['temperature']},occupancy={telemetry['occupancy']},energy={telemetry['energy']} {int(time.time() * 1e9)}"
+        influxdb_write_api.write(bucket=INFLUXDB_BUCKET, record=point)
+        return True
+    except Exception as e:
+        print(f"[!] InfluxDB write error: {e}")
+        return False
+
+
+def store_alert_to_mongodb(alert_data: dict) -> bool:
+    """Store alert to MongoDB."""
+    if not mongodb_db:
+        return False
+    
+    try:
+        alerts_collection = mongodb_db["alerts"]
+        alerts_collection.insert_one({
+            **alert_data,
+            "stored_at": datetime.utcnow(),
+        })
+        return True
+    except Exception as e:
+        print(f"[!] MongoDB insert error: {e}")
+        return False
+
+
+def query_latest_telemetry_from_influxdb() -> dict | None:
+    """Query the latest telemetry from InfluxDB (if available)."""
+    if not influxdb_client:
+        return None
+    
+    try:
+        query_api = influxdb_client.query_api()
+        query = f'''
+        from(bucket: "{INFLUXDB_BUCKET}")
+            |> range(start: -5m)
+            |> filter(fn: (r) => r._measurement == "telemetry")
+            |> sort(columns: ["_time"], desc: true)
+            |> limit(n: 1)
+        '''
+        result = query_api.query(org=INFLUXDB_ORG, query=query)
+        if result and len(result) > 0:
+            records = result[0].records
+            if records:
+                latest = records[0]
+                return {
+                    "field": latest.field,
+                    "value": latest.value,
+                    "time": latest.get_time(),
+                }
+    except Exception as e:
+        print(f"[!] InfluxDB query error: {e}")
+    
+    return None
+
+
+# ============================================================================
 # DATA GENERATION LOGIC
 # ============================================================================
 def _generate_telemetry(mode: SimulationMode) -> dict:
@@ -173,6 +287,7 @@ def get_campus_data() -> dict:
     - mode: current simulation mode
     - alerts: last 10 alerts with timestamps
     - system_health: {status, timestamp}
+    - database_status: {influxdb, mongodb} connectivity info
     """
     request_counter.labels(endpoint="data").inc()
     
@@ -180,8 +295,11 @@ def get_campus_data() -> dict:
     mode = state.get_mode()
     mode_gauge.set(SIMULATION_MODES.index(mode))
     
-    # Generate telemetry based on mode
+    # Generate telemetry based on mode (simulation)
     telemetry = _generate_telemetry(mode)
+    
+    # Write telemetry to InfluxDB
+    influxdb_status = write_telemetry_to_influxdb(telemetry, mode)
     
     # Record alert
     alert_log = {
@@ -192,6 +310,10 @@ def get_campus_data() -> dict:
         "energy": telemetry["energy"],
     }
     state.add_alert(alert_log)
+    
+    # Store alert to MongoDB
+    mongodb_status = store_alert_to_mongodb(alert_log)
+    
     alert_counter.labels(alert_level=telemetry["alert"]).inc()
     
     return {
@@ -205,6 +327,12 @@ def get_campus_data() -> dict:
             "status": state.system_status,
             "timestamp": datetime.utcnow().isoformat(),
             "uptime_seconds": (datetime.utcnow() - datetime.fromisoformat(state.system_start_time)).total_seconds(),
+        },
+        "database_status": {
+            "influxdb": "connected" if influxdb_client else "disconnected",
+            "influxdb_write": "success" if influxdb_status else "failed",
+            "mongodb": "connected" if mongodb_client else "disconnected",
+            "mongodb_write": "success" if mongodb_status else "failed",
         },
     }
 
@@ -238,11 +366,29 @@ def set_simulation_mode(mode: SimulationMode) -> dict:
 
 @app.get("/alerts")
 def get_alert_history() -> dict:
-    """Get the last 10 alerts with full details."""
+    """Get alert history (from memory + MongoDB if available)."""
     request_counter.labels(endpoint="alerts").inc()
+    
+    alerts_data = state.get_alerts()
+    mongodb_alerts = []
+    
+    # Query MongoDB for historical alerts
+    if mongodb_db:
+        try:
+            alerts_collection = mongodb_db["alerts"]
+            # Get last 100 alerts from MongoDB
+            mongodb_alerts = list(alerts_collection.find().sort("stored_at", -1).limit(100))
+            # Convert ObjectId to string for JSON serialization
+            for alert in mongodb_alerts:
+                alert["_id"] = str(alert.get("_id", ""))
+        except Exception as e:
+            print(f"[!] MongoDB query error: {e}")
+    
     return {
-        "alerts": state.get_alerts(),
-        "total_count": len(state.get_alerts()),
+        "alerts_memory": alerts_data,
+        "alerts_mongodb": mongodb_alerts[:10],  # Last 10 from database
+        "total_count": len(alerts_data),
+        "database_alerts_count": len(mongodb_alerts),
     }
 
 

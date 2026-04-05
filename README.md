@@ -107,7 +107,70 @@ This repository is configured with a full CI/CD pipeline using GitHub Actions. O
 3. The application is deployed to a Kubernetes cluster.
 
 Quick start: **`scripts/compose-up.ps1`** (Windows) or **`scripts/compose-up.sh`** (Git Bash / Linux / macOS).
+## Database Integration — InfluxDB & MongoDB
 
+### Overview
+
+The backend now integrates with **two databases**:
+
+- **InfluxDB** (port 8086): Time-series database for sensor telemetry (temperature, occupancy, energy)
+- **MongoDB** (port 27017): Document store for alert history and metadata
+
+Both databases are automatically provisioned in **`docker-compose.yml`** with persistent volumes.
+
+### Configuration
+
+Database credentials and URLs are configured via environment variables in the **`.env`** file (created at project root):
+
+```env
+# InfluxDB
+INFLUXDB_URL=http://influxdb:8086
+INFLUXDB_TOKEN=my-admin-token
+INFLUXDB_ORG=myorg
+INFLUXDB_BUCKET=sensors
+
+# MongoDB
+MONGODB_URL=mongodb://admin:changeme@mongodb:27017/
+MONGODB_DB=digital_twin
+```
+
+**⚠️ Production:** Change default credentials (`my-admin-token`, `changeme`) in `.env`.
+
+### Backend Integration
+
+The FastAPI backend automatically:
+
+1. **Connects** to InfluxDB and MongoDB on startup
+2. **Writes** telemetry data to InfluxDB with each `/data` request
+3. **Stores** alerts in MongoDB for persistent audit trail
+4. **Queries** MongoDB for historical alert retrieval via `/alerts` endpoint
+5. **Reports** database connectivity status in the `/data` response
+
+### Querying Data
+
+#### InfluxDB
+
+Access Web UI at **http://localhost:8086** (username: `admin`, password: `changeme`). Query historical temperature:
+
+```sql
+from(bucket: "sensors")
+  |> range(start: -24h)
+  |> filter(fn: (r) => r._measurement == "telemetry")
+```
+
+#### MongoDB
+
+Connect via Compass or shell:
+
+```bash
+mongosh "mongodb://admin:changeme@localhost:27017/digital_twin"
+```
+
+List recent alerts:
+
+```javascript
+db.alerts.find().sort({ stored_at: -1 }).limit(10)
+```
 If the frontend stays in **“Waiting”**, ensure Compose v2 is current and wait for the backend **`start_period`** (40s on first boot); run **`docker compose ps`** and **`docker compose logs backend`**.
 
 ## Screenshots
