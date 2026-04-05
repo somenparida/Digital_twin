@@ -36,6 +36,10 @@
   color: var(--accent);
 }
 
+/* ============================================================================
+   LOADING & ERROR STATES
+   ============================================================================ */
+
 .loading-banner,
 .error-banner {
   display: flex;
@@ -73,6 +77,213 @@
     transform: rotate(360deg);
   }
 }
+
+/* ============================================================================
+   CRITICAL ALERT POPUP
+   ============================================================================ */
+
+.critical-popup {
+  position: fixed;
+  top: 2rem;
+  left: 50%;
+  transform: translateX(-50%);
+  background: rgba(248, 81, 73, 0.95);
+  border: 2px solid #ff5555;
+  border-radius: 12px;
+  padding: 1.25rem;
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  max-width: 500px;
+  z-index: 1000;
+  box-shadow: 0 8px 32px rgba(248, 81, 73, 0.3);
+  animation: slideDown 0.3s ease-out;
+}
+
+@keyframes slideDown {
+  from {
+    transform: translate(-50%, -120%);
+    opacity: 0;
+  }
+  to {
+    transform: translate(-50%, 0);
+    opacity: 1;
+  }
+}
+
+.critical-icon {
+  font-size: 2rem;
+  flex-shrink: 0;
+}
+
+.critical-popup strong {
+  display: block;
+  font-size: 1.1rem;
+  margin-bottom: 0.25rem;
+}
+
+.critical-popup p {
+  margin: 0;
+  font-size: 0.9rem;
+  opacity: 0.95;
+}
+
+.popup-close {
+  background: rgba(255, 255, 255, 0.2);
+  border: none;
+  color: white;
+  font-size: 1.2rem;
+  padding: 0.25rem 0.5rem;
+  border-radius: 4px;
+  cursor: pointer;
+  flex-shrink: 0;
+  margin-left: auto;
+}
+
+.popup-close:hover {
+  background: rgba(255, 255, 255, 0.3);
+}
+
+/* ============================================================================
+   SYSTEM HEALTH PANEL
+   ============================================================================ */
+
+.system-health {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 0.75rem;
+  margin-bottom: 1.5rem;
+  padding: 1rem;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+}
+
+.health-item {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.health-label {
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+}
+
+.health-value {
+  font-family: var(--font-mono);
+  font-size: 1rem;
+  font-weight: 600;
+}
+
+.health-value.up {
+  color: var(--green);
+}
+
+.health-value.down {
+  color: var(--red);
+}
+
+.health-value.mode-normal {
+  color: var(--green);
+}
+
+.health-value.mode-warning {
+  color: var(--yellow);
+}
+
+.health-value.mode-critical {
+  color: var(--red);
+}
+
+/* ============================================================================
+   MODE CONTROL BUTTONS
+   ============================================================================ */
+
+.mode-control {
+  margin-bottom: 1.5rem;
+  padding: 1rem;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+
+.mode-label {
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: var(--text);
+  margin: 0;
+}
+
+.mode-buttons {
+  display: flex;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.mode-btn {
+  padding: 0.5rem 1rem;
+  border: 2px solid;
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.2);
+  font-family: var(--font-mono);
+  font-size: 0.85rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  border-color: var(--border);
+  color: var(--text);
+}
+
+.mode-btn:hover:not(:disabled) {
+  opacity: 0.8;
+  transform: translateY(-1px);
+}
+
+.mode-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.mode-btn.mode-normal {
+  color: var(--green);
+  border-color: var(--green);
+}
+
+.mode-btn.mode-normal.active {
+  background: rgba(63, 185, 80, 0.2);
+  box-shadow: 0 0 12px rgba(63, 185, 80, 0.3);
+}
+
+.mode-btn.mode-warning {
+  color: var(--yellow);
+  border-color: var(--yellow);
+}
+
+.mode-btn.mode-warning.active {
+  background: rgba(201, 209, 66, 0.2);
+  box-shadow: 0 0 12px rgba(201, 209, 66, 0.3);
+}
+
+.mode-btn.mode-critical {
+  color: var(--red);
+  border-color: var(--red);
+}
+
+.mode-btn.mode-critical.active {
+  background: rgba(248, 81, 73, 0.2);
+  box-shadow: 0 0 12px rgba(248, 81, 73, 0.3);
+}
+
+/* ============================================================================
+   METRICS CARDS
+   ============================================================================ */
 
 .cards {
   display: grid;
@@ -117,13 +328,127 @@
   background: rgba(0, 0, 0, 0.25);
 }
 
+/* ============================================================================
+   CHART
+   ============================================================================ */
+
 .chart-wrap {
   height: 380px;
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: 12px;
   padding: 1rem 1rem 0.5rem;
+  margin-bottom: 1.5rem;
 }
+
+/* ============================================================================
+   ALERT HISTORY
+   ============================================================================ */
+
+.alert-history-section {
+  margin-bottom: 1.5rem;
+}
+
+.toggle-history-btn {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  color: var(--text);
+  padding: 0.75rem 1rem;
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 0.9rem;
+  font-weight: 600;
+  transition: all 0.2s ease;
+}
+
+.toggle-history-btn:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.alert-history {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 1.25rem;
+  margin-top: 0.75rem;
+  max-height: 400px;
+  overflow-y: auto;
+}
+
+.alert-history h3 {
+  margin: 0 0 1rem;
+  font-size: 1rem;
+  color: var(--text);
+}
+
+.alert-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.alert-item {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.75rem;
+  background: rgba(0, 0, 0, 0.2);
+  border-left: 3px solid;
+  border-radius: 6px;
+  font-size: 0.85rem;
+}
+
+.alert-item.alert-normal {
+  border-left-color: var(--green);
+}
+
+.alert-item.alert-warning {
+  border-left-color: var(--yellow);
+}
+
+.alert-item.alert-critical {
+  border-left-color: var(--red);
+}
+
+.alert-time {
+  font-family: var(--font-mono);
+  color: var(--muted);
+  min-width: 80px;
+}
+
+.alert-badge {
+  font-weight: 600;
+  padding: 0.25rem 0.5rem;
+  background: rgba(0, 0, 0, 0.3);
+  border-radius: 4px;
+  min-width: 70px;
+  text-align: center;
+}
+
+.alert-item.alert-normal .alert-badge {
+  color: var(--green);
+}
+
+.alert-item.alert-warning .alert-badge {
+  color: var(--yellow);
+}
+
+.alert-item.alert-critical .alert-badge {
+  color: var(--red);
+}
+
+.alert-details {
+  color: var(--muted);
+  margin-left: auto;
+}
+
+/* ============================================================================
+   UTILITIES
+   ============================================================================ */
 
 .muted {
   color: var(--muted);

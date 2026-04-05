@@ -1,0 +1,55 @@
+# Prometheus Configuration for Campus Digital Twin DevOps System
+# Scrapes metrics from backend API and local services
+# Access Grafana at http://localhost:3001 (default credentials: admin/admin)
+
+global:
+  scrape_interval: 15s      # Default scrape interval
+  evaluation_interval: 15s   # Evaluate rules every 15 seconds
+  external_labels:
+    monitor: "campus-digital-twin"
+    environment: "development"
+
+# Alertmanager configuration (optional for future use)
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets: []
+
+# Load rules once and periodically evaluate them
+rule_files: []
+
+scrape_configs:
+  # ========================================================================
+  # Backend API Monitor - Campus Digital Twin Metrics
+  # ========================================================================
+  - job_name: "campus-backend"
+    # Metrics endpoint: GET /metrics returns Prometheus format
+    metrics_path: "/metrics"
+    static_configs:
+      # In Docker Compose: use service name "backend" on internal network
+      # In Kubernetes: use service DNS "backend.default.svc.cluster.local"
+      # Local development: localhost:8000
+      - targets: ["backend:8000"]
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: instance
+        replacement: "campus-backend-primary"
+    scrape_interval: 10s  # More frequent scraping for real-time monitoring
+    scrape_timeout: 5s
+
+  # ========================================================================
+  # Prometheus Self-Monitor
+  # ========================================================================
+  - job_name: "prometheus"
+    static_configs:
+      - targets: ["localhost:9090"]
+    scrape_interval: 30s
+
+  # ========================================================================
+  # Grafana Health (if scraped from metrics)
+  # ========================================================================
+  - job_name: "grafana"
+    static_configs:
+      - targets: ["grafana:3000"]
+    scrape_interval: 30s
+    scrape_timeout: 10s

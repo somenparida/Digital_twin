@@ -1,25 +1,121 @@
 """
-Live Campus Digital Twin — FastAPI backend.
-Serves simulated campus metrics at GET /data with CORS enabled for the dashboard.
+Live Campus Digital Twin — FastAPI backend with DevOps monitoring.
+
+Features:
+- Simulation modes (normal, warning, critical) with switchable control
+- Auto-recovery from critical mode after 10 seconds
+- Alert logging (last 10 alerts with timestamps)
+- System health tracking
+- Prometheus metrics (request counter, active mode gauge)
 """
 import random
+import threading
+import time
+from datetime import datetime
 from typing import Literal
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from prometheus_client import Counter, Gauge, generate_latest, CollectorRegistry
 
-# Valid alert levels for the digital twin simulation
+# ============================================================================
+# TYPE DEFINITIONS
+# ============================================================================
 AlertLevel = Literal["Normal", "Warning", "Critical"]
-ALERT_LEVELS: list[AlertLevel] = ["Normal", "Warning", "Critical"]
+SimulationMode = Literal["normal", "warning", "critical"]
+SystemStatus = Literal["UP", "DOWN"]
 
+ALERT_LEVELS: list[AlertLevel] = ["Normal", "Warning", "Critical"]
+SIMULATION_MODES: list[SimulationMode] = ["normal", "warning", "critical"]
+
+# ============================================================================
+# GLOBAL STATE MANAGEMENT
+# ============================================================================
+class SimulationState:
+    """Thread-safe simulation state manager."""
+    
+    def __init__(self):
+        self.mode: SimulationMode = "normal"
+        self.last_10_alerts: list[dict] = []  # [{timestamp, alert, temperature, occupancy, energy}, ...]
+        self.system_status: SystemStatus = "UP"
+        self.system_start_time = datetime.utcnow().isoformat()
+        self.critical_start_time: float | None = None  # Track when critical mode started
+        self.lock = threading.Lock()
+    
+    def set_mode(self, mode: SimulationMode) -> None:
+        """Thread-safe mode setter."""
+        with self.lock:
+            self.mode = mode
+            if mode == "critical":
+                self.critical_start_time = time.time()
+            else:
+                self.critical_start_time = None
+    
+    def get_mode(self) -> SimulationMode:
+        """Thread-safe mode getter."""
+        with self.lock:
+            # Auto-recovery: reset critical to normal after 10 seconds
+            if self.mode == "critical" and self.critical_start_time:
+                elapsed = time.time() - self.critical_start_time
+                if elapsed > 10:
+                    self.mode = "normal"
+                    self.critical_start_time = None
+            return self.mode
+    
+    def add_alert(self, alert_data: dict) -> None:
+        """Add alert to history (keep last 10)."""
+        with self.lock:
+            self.last_10_alerts.append(alert_data)
+            # Keep only last 10
+            if len(self.last_10_alerts) > 10:
+                self.last_10_alerts = self.last_10_alerts[-10:]
+    
+    def get_alerts(self) -> list[dict]:
+        """Get current alerts."""
+        with self.lock:
+            return list(self.last_10_alerts)
+
+
+state = SimulationState()
+
+# ============================================================================
+# PROMETHEUS METRICS SETUP
+# ============================================================================
+registry = CollectorRegistry()
+
+# Counter: total API requests
+request_counter = Counter(
+    "campus_api_requests_total",
+    "Total number of API requests",
+    ["endpoint"],
+    registry=registry,
+)
+
+# Gauge: current simulation mode (0=normal, 1=warning, 2=critical)
+mode_gauge = Gauge(
+    "campus_simulation_mode",
+    "Current simulation mode (0=normal, 1=warning, 2=critical)",
+    registry=registry,
+)
+
+# Counter: total alerts generated
+alert_counter = Counter(
+    "campus_alerts_total",
+    "Total number of alerts generated",
+    ["alert_level"],
+    registry=registry,
+)
+
+# ============================================================================
+# FASTAPI APP SETUP
+# ============================================================================
 app = FastAPI(
     title="Campus Digital Twin API",
-    description="Simulated real-time campus temperature, occupancy, energy, and alerts.",
-    version="1.0.0",
+    description="DevOps-enabled simulated campus telemetry with simulation control and monitoring.",
+    version="2.0.0",
 )
 
 # CORS: allow dashboard origins (local dev + Docker + any deployed host)
-# Wildcard origin cannot be combined with credentials (browser CORS rules).
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -28,22 +124,141 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# ============================================================================
+# DATA GENERATION LOGIC
+# ============================================================================
+def _generate_telemetry(mode: SimulationMode) -> dict:
+    """Generate telemetry based on current simulation mode."""
+    if mode == "normal":
+        temp = round(random.uniform(20.0, 28.0), 1)
+        occupancy = random.randint(20, 80)
+        energy = random.randint(150, 350)
+        # In normal mode, heavily bias toward "Normal" alert
+        alert = random.choices(ALERT_LEVELS, weights=[0.85, 0.10, 0.05])[0]
+    
+    elif mode == "warning":
+        temp = round(random.uniform(28.0, 35.0), 1)
+        occupancy = random.randint(60, 95)
+        energy = random.randint(350, 450)
+        # In warning mode, bias toward "Warning"
+        alert = random.choices(ALERT_LEVELS, weights=[0.20, 0.70, 0.10])[0]
+    
+    else:  # critical
+        temp = round(random.uniform(35.0, 40.0), 1)
+        occupancy = random.randint(85, 100)
+        energy = random.randint(450, 500)
+        # In critical mode, always critical alert
+        alert = "Critical"
+    
+    return {
+        "temperature": temp,
+        "occupancy": occupancy,
+        "energy": energy,
+        "alert": alert,
+    }
+
+
+# ============================================================================
+# API ENDPOINTS
+# ============================================================================
 
 @app.get("/data")
 def get_campus_data() -> dict:
     """
-    Return one snapshot of simulated campus telemetry.
-    Ranges: temperature 20–40°C, occupancy 0–100%, energy 100–500 kWh (arbitrary unit).
+    Get current campus telemetry with system health.
+    
+    Response includes:
+    - temperature, occupancy, energy: simulated metric values
+    - alert: alert level (Normal/Warning/Critical)
+    - mode: current simulation mode
+    - alerts: last 10 alerts with timestamps
+    - system_health: {status, timestamp}
     """
-    return {
-        "temperature": round(random.uniform(20.0, 40.0), 1),
-        "occupancy": random.randint(0, 100),
-        "energy": random.randint(100, 500),
-        "alert": random.choice(ALERT_LEVELS),
+    request_counter.labels(endpoint="data").inc()
+    
+    # Get current mode (with auto-recovery check)
+    mode = state.get_mode()
+    mode_gauge.set(SIMULATION_MODES.index(mode))
+    
+    # Generate telemetry based on mode
+    telemetry = _generate_telemetry(mode)
+    
+    # Record alert
+    alert_log = {
+        "timestamp": datetime.utcnow().isoformat(),
+        "alert": telemetry["alert"],
+        "temperature": telemetry["temperature"],
+        "occupancy": telemetry["occupancy"],
+        "energy": telemetry["energy"],
     }
+    state.add_alert(alert_log)
+    alert_counter.labels(alert_level=telemetry["alert"]).inc()
+    
+    return {
+        "temperature": telemetry["temperature"],
+        "occupancy": telemetry["occupancy"],
+        "energy": telemetry["energy"],
+        "alert": telemetry["alert"],
+        "mode": mode,
+        "alerts": state.get_alerts(),
+        "system_health": {
+            "status": state.system_status,
+            "timestamp": datetime.utcnow().isoformat(),
+            "uptime_seconds": (datetime.utcnow() - datetime.fromisoformat(state.system_start_time)).total_seconds(),
+        },
+    }
+
+
+@app.post("/mode/{mode}")
+def set_simulation_mode(mode: SimulationMode) -> dict:
+    """
+    Set the simulation mode (normal, warning, critical).
+    
+    Modes:
+    - normal: temp 20-28°C, occupancy 20-80%, low energy
+    - warning: temp 28-35°C, occupancy 60-95%, medium energy
+    - critical: temp 35-40°C, occupancy 85-100%, high energy
+    
+    Note: Critical mode auto-resets to normal after 10 seconds.
+    """
+    request_counter.labels(endpoint="mode").inc()
+    
+    if mode not in SIMULATION_MODES:
+        return {"error": f"Invalid mode. Must be one of {SIMULATION_MODES}"}
+    
+    state.set_mode(mode)
+    mode_gauge.set(SIMULATION_MODES.index(mode))
+    
+    return {
+        "mode": mode,
+        "message": f"Simulation mode set to {mode}",
+        "auto_recovery": "Enabled (10s to reset from critical)" if mode == "critical" else "N/A",
+    }
+
+
+@app.get("/alerts")
+def get_alert_history() -> dict:
+    """Get the last 10 alerts with full details."""
+    request_counter.labels(endpoint="alerts").inc()
+    return {
+        "alerts": state.get_alerts(),
+        "total_count": len(state.get_alerts()),
+    }
+
+
+@app.get("/metrics")
+def get_prometheus_metrics():
+    """Prometheus metrics endpoint (port 8000)."""
+    request_counter.labels(endpoint="metrics").inc()
+    return generate_latest(registry)
 
 
 @app.get("/health")
 def health() -> dict:
     """Health check for orchestrators and load balancers."""
-    return {"status": "ok"}
+    request_counter.labels(endpoint="health").inc()
+    return {
+        "status": state.system_status,
+        "timestamp": datetime.utcnow().isoformat(),
+        "version": "2.0.0",
+    }

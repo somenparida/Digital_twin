@@ -1,8 +1,12 @@
-# Docker Compose v2+ (needs `depends_on: condition: service_healthy`).
-# Frontend reaches the API via Docker DNS name `backend` on the internal network only.
+# Docker Compose v2+ - Campus Digital Twin DevOps Stack
+# Services: backend API, frontend dashboard, Prometheus metrics, Grafana visualization
+# Network: all services communicate via internal Docker DNS (campus network)
 name: digital-twin-devops
 
 services:
+  # ============================================================================
+  # Backend API Service
+  # ============================================================================
   backend:
     build:
       context: ./backend
@@ -25,7 +29,13 @@ services:
       retries: 5
       start_period: 40s
     restart: unless-stopped
+    environment:
+      # Python logging
+      PYTHONUNBUFFERED: "1"
 
+  # ============================================================================
+  # Frontend Service (React + Nginx)
+  # ============================================================================
   frontend:
     build:
       context: ./frontend
@@ -51,6 +61,81 @@ services:
       start_period: 30s
     restart: unless-stopped
 
+  # ============================================================================
+  # Prometheus - Metrics Collection & Storage
+  # ============================================================================
+  prometheus:
+    image: prom/prometheus:latest
+    ports:
+      - "9090:9090"
+    networks:
+      - campus
+    volumes:
+      # Mount prometheus.yml from project root
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      # Persist data across container restarts
+      - prometheus_data:/prometheus
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+      - "--web.enable-lifecycle"
+      - "--web.console.libraries=/usr/share/prometheus/console_libraries"
+      - "--web.console.templates=/usr/share/prometheus/consoles"
+    depends_on:
+      backend:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://127.0.0.1:9090/-/healthy"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # ============================================================================
+  # Grafana - Metrics Visualization & Dashboards
+  # ============================================================================
+  grafana:
+    image: grafana/grafana:latest
+    ports:
+      - "3001:3000"  # Note: Grafana runs on 3000 internally, exposed on 3001 externally
+    networks:
+      - campus
+    volumes:
+      # Persist Grafana data (dashboards, datasources, users)
+      - grafana_data:/var/lib/grafana
+    environment:
+      # Default credentials
+      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_SECURITY_ADMIN_USER: admin
+      # Disable login screen on first run
+      GF_AUTH_ANONYMOUS_ENABLED: "false"
+      # Data source auto-provisioning
+      GF_INSTALL_PLUGINS: "grafana-piechart-panel"
+    depends_on:
+      prometheus:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://127.0.0.1:3000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+# ============================================================================
+# Networks
+# ============================================================================
 networks:
   campus:
     driver: bridge
+
+# ============================================================================
+# Volumes - Persist data across container restarts
+# ============================================================================
+volumes:
+  prometheus_data:
+    driver: local
+  grafana_data:
+    driver: local
+

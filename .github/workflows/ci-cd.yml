@@ -99,17 +99,32 @@ jobs:
           push: true
           tags: ${{ env.DOCKERHUB_USERNAME }}/${{ env.IMAGE_FRONTEND }}:${{ github.sha }}
 
-      - name: Set up Kubeconfig
-        run: |
-          mkdir -p $HOME/.kube
-          echo "${{ secrets.KUBE_CONFIG_DATA }}" | base64 --decode > $HOME/.kube/config
-          chmod 600 $HOME/.kube/config
+  deploy-to-ec2:
+    needs: [deploy]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
 
-      - name: Update Kubernetes manifests
-        run: |
-          sed -i "s|image:.*backend.*|image: ${{ env.DOCKERHUB_USERNAME }}/${{ env.IMAGE_BACKEND }}:${{ github.sha }}|g" k8s/backend-deployment.yaml
-          sed -i "s|image:.*frontend.*|image: ${{ env.DOCKERHUB_USERNAME }}/${{ env.IMAGE_FRONTEND }}:${{ github.sha }}|g" k8s/frontend-deployment.yaml
-
-      - name: Deploy to Kubernetes
-        run: |
-          kubectl apply -k k8s/
+      - name: Deploy to EC2 via SSH
+        uses: appleboy/ssh-action@master
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ec2-user
+          key: ${{ secrets.EC2_SSH_KEY }}
+          port: 22
+          script: |
+            # Pull latest deployment files
+            cd /home/ec2-user/Digital_twin || git clone https://github.com/${{ github.repository }}.git /home/ec2-user/Digital_twin
+            cd /home/ec2-user/Digital_twin
+            git pull origin main
+            
+            # Update docker-compose with latest image tags
+            sed -i "s|image:.*backend.*|image: ${{ env.DOCKERHUB_USERNAME }}/${{ env.IMAGE_BACKEND }}:${{ github.sha }}|g" docker-compose.yml
+            sed -i "s|image:.*frontend.*|image: ${{ env.DOCKERHUB_USERNAME }}/${{ env.IMAGE_FRONTEND }}:${{ github.sha }}|g" docker-compose.yml
+            
+            # Restart services
+            docker compose pull
+            docker compose up -d --remove-orphans
+            docker compose ps

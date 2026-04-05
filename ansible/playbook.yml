@@ -1,11 +1,19 @@
 ---
-# Install Docker Engine on Amazon Linux 2023 (targets EC2 from Terraform).
+# Deploy Campus Digital Twin to Amazon Linux 2023 EC2 instance.
+# Installs Docker, Docker Compose, clones project, and starts services.
 # Run: ansible-playbook -i inventory.ini playbook.yml
-- name: Install Docker on EC2
+
+- name: Deploy Campus Digital Twin DevOps Stack
   hosts: campus_servers
   become: true
+  vars:
+    project_dir: /home/ec2-user/Digital_twin
+    docker_compose_version: "2.24.0"
 
   tasks:
+    # =========================================================================
+    # Docker Installation
+    # =========================================================================
     - name: Ensure Docker is installed (Amazon Linux 2023)
       ansible.builtin.dnf:
         name: docker
@@ -18,8 +26,98 @@
         state: started
         enabled: true
 
-    - name: Add ec2-user to docker group (optional, for passwordless docker CLI)
+    - name: Add ec2-user to docker group (passwordless docker CLI)
       ansible.builtin.user:
         name: ec2-user
         groups: docker
         append: true
+
+    # =========================================================================
+    # Docker Compose Installation
+    # =========================================================================
+    - name: Download Docker Compose binary
+      ansible.builtin.get_url:
+        url: "https://github.com/docker/compose/releases/download/v{{ docker_compose_version }}/docker-compose-linux-x86_64"
+        dest: /usr/local/bin/docker-compose
+        mode: "0755"
+
+    - name: Create docker-compose symlink
+      ansible.builtin.file:
+        src: /usr/local/bin/docker-compose
+        dest: /usr/bin/docker-compose
+        state: link
+
+    # =========================================================================
+    # Project Deployment
+    # =========================================================================
+    - name: Create project directory
+      ansible.builtin.file:
+        path: "{{ project_dir }}"
+        state: directory
+        owner: ec2-user
+        group: ec2-user
+        mode: "0755"
+
+    - name: Clone or update repository
+      ansible.builtin.git:
+        repo: "https://github.com/somenparida/Digital_twin.git"
+        dest: "{{ project_dir }}"
+        version: main
+      become_user: ec2-user
+
+    # =========================================================================
+    # Service Startup
+    # =========================================================================
+    - name: Build and start services with Docker Compose
+      ansible.builtin.shell: |
+        cd {{ project_dir }}
+        docker compose pull
+        docker compose up -d --remove-orphans
+      become_user: ec2-user
+      register: compose_result
+
+    - name: Display Docker Compose status
+      ansible.builtin.debug:
+        msg: "{{ compose_result.stdout }}"
+
+    - name: Wait for services to be healthy
+      ansible.builtin.pause:
+        seconds: 15
+
+    - name: Verify service health
+      ansible.builtin.shell: |
+        cd {{ project_dir }}
+        docker compose ps
+      become_user: ec2-user
+      register: compose_status
+
+    - name: Display final service status
+      ansible.builtin.debug:
+        msg: "{{ compose_status.stdout }}"
+
+    # =========================================================================
+    # Firewall Configuration
+    # =========================================================================
+    - name: Open ports in firewall (if firewalld is active)
+      ansible.builtin.firewalld:
+        port: "{{ item }}/tcp"
+        permanent: true
+        state: enabled
+        immediate: true
+      loop:
+        - "3000"  # Frontend
+        - "8000"  # Backend
+        - "9090"  # Prometheus
+        - "3001"  # Grafana
+      when: ansible.builtin.service_facts()['firewalld'] is defined and ansible.builtin.service_facts()['firewalld']['state'] == 'running'
+
+    - name: Display access instructions
+      ansible.builtin.debug:
+        msg: |
+          ✅ Deployment complete!
+          
+          Access your services at:
+          - Frontend:   http://{{ ansible_host }}:3000
+          - Backend:    http://{{ ansible_host }}:8000
+          - Prometheus: http://{{ ansible_host }}:9090
+          - Grafana:    http://{{ ansible_host }}:3001 (admin/admin)
