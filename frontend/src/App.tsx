@@ -1,262 +1,144 @@
-import { useCallback, useEffect, useMemo, useState, useRef } from "react";
+import { useMemo, useState, useRef, useEffect } from "react";
 import {
-  Chart as ChartJS,
-  CategoryScale,
-  LinearScale,
-  PointElement,
-  LineElement,
-  Title,
+  LineChart,
+  Line,
+  XAxis,
+  YAxis,
+  CartesianGrid,
   Tooltip,
   Legend,
-  Filler,
-} from "chart.js";
-import { Line } from "react-chartjs-2";
-import { fetchCampusData, setSimulationMode, type CampusPayload, type SimulationMode, type Alert } from "./api";
+  ResponsiveContainer,
+} from "recharts";
+import { useSensorData, type SensorRecord } from "./useSensorData";
+import { type SimulationMode, type CampusPayload, type Alert } from "./api";
 import "./App.css";
-
-ChartJS.register(
-  CategoryScale,
-  LinearScale,
-  PointElement,
-  LineElement,
-  Title,
-  Tooltip,
-  Legend,
-  Filler
-);
-
-const MAX_POINTS = 24;
-const POLL_MS = 2000;
 
 /**
  * Get color for alert level
  */
-function alertColor(alert: CampusPayload["alert"]): string {
+function alertColor(alert: CampusPayload['alert']): string {
   switch (alert) {
-    case "Normal":
-      return "var(--green)";
-    case "Warning":
-      return "var(--yellow)";
-    case "Critical":
-      return "var(--red)";
+    case 'Normal':
+      return 'var(--green)';
+    case 'Warning':
+      return 'var(--yellow)';
+    case 'Critical':
+      return 'var(--red)';
     default:
-      return "var(--muted)";
+      return 'var(--muted)';
   }
 }
 
 /**
- * Play alert sound when critical
+ * Get glow color based on simulation mode
  */
-function playAlertSound() {
-  try {
-    // Create a simple beep sound using Web Audio API
-    const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
-    const oscillator = audioContext.createOscillator();
-    const gainNode = audioContext.createGain();
-    
-    oscillator.connect(gainNode);
-    gainNode.connect(audioContext.destination);
-    
-    oscillator.frequency.value = 800; // 800 Hz beep
-    oscillator.type = "sine";
-    
-    gainNode.gain.setValueAtTime(0.3, audioContext.currentTime);
-    gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.5);
-    
-    oscillator.start(audioContext.currentTime);
-    oscillator.stop(audioContext.currentTime + 0.5);
-  } catch (e) {
-    console.error("Error playing alert sound:", e);
+function getGlowColor(mode: SimulationMode): string {
+  switch (mode) {
+    case 'normal':
+      return '#10b981'; // Green
+    case 'warning':
+      return '#f59e0b'; // Yellow
+    case 'critical':
+      return '#ef4444'; // Red
+    default:
+      return '#06b6d4'; // Cyan
   }
 }
 
 /**
- * Format timestamp to readable time
+ * Format time to HH:MM:SS
  */
-function formatTime(isoString: string): string {
-  const date = new Date(isoString);
-  return date.toLocaleTimeString();
+function formatUptime(seconds: number): string {
+  const hours = Math.floor(seconds / 3600);
+  const mins = Math.floor((seconds % 3600) / 60);
+  const secs = seconds % 60;
+  return `${String(hours).padStart(2, '0')}:${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
+}
+
+/**
+ * Custom tooltip for Recharts
+ */
+function CustomTooltip({ active, payload }: any) {
+  if (active && payload && payload.length) {
+    return (
+      <div className="recharts-custom-tooltip">
+        <p className="tooltip-time">{payload[0].payload.timestamp}</p>
+        {payload.map((entry: any, index: number) => (
+          <p key={index} style={{ color: entry.color }}>
+            {entry.name}: {entry.value}
+            {entry.name.includes('Temperature') && '°C'}
+            {entry.name.includes('Occupancy') && '%'}
+            {entry.name.includes('Energy') && ' kWh'}
+          </p>
+        ))}
+      </div>
+    );
+  }
+  return null;
 }
 
 export default function App() {
-  const [data, setData] = useState<CampusPayload | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [history, setHistory] = useState<
-    { t: string; temperature: number; occupancy: number; energy: number }[]
-  >([]);
-  
-  // New state for enhanced features
-  const [currentMode, setCurrentMode] = useState<SimulationMode>("normal");
+  const { data, history, loading, error, currentMode, uptime, latency, handleModeChange } =
+    useSensorData();
+
   const [showCriticalPopup, setShowCriticalPopup] = useState(false);
   const [modeLoading, setModeLoading] = useState(false);
   const [showAlertHistory, setShowAlertHistory] = useState(false);
   const previousAlertRef = useRef<string | null>(null);
 
   /**
-   * Load campus data from API
+   * Handle critical alerts
    */
-  const load = useCallback(async () => {
-    try {
-      const next = await fetchCampusData();
-      setData(next);
-      setError(null);
-      setCurrentMode(next.mode);
-      
-      const label = new Date().toLocaleTimeString();
-      setHistory((prev) => {
-        const row = {
-          t: label,
-          temperature: next.temperature,
-          occupancy: next.occupancy,
-          energy: next.energy,
-        };
-        const merged = [...prev, row];
-        return merged.slice(-MAX_POINTS);
-      });
-      
-      // Handle critical alert popup and sound
-      if (next.alert === "Critical" && previousAlertRef.current !== "Critical") {
-        setShowCriticalPopup(true);
-        playAlertSound();
-        // Auto-close popup after 5 seconds
-        setTimeout(() => setShowCriticalPopup(false), 5000);
-      }
-      
-      previousAlertRef.current = next.alert;
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed to load data");
-    } finally {
-      setLoading(false);
+  useEffect(() => {
+    if (data?.alert === 'Critical' && previousAlertRef.current !== 'Critical') {
+      setShowCriticalPopup(true);
+      setTimeout(() => setShowCriticalPopup(false), 5000);
     }
-  }, []);
+    previousAlertRef.current = data?.alert ?? null;
+  }, [data?.alert]);
 
   /**
-   * Handle mode change button click
+   * Handle mode change with loading state
    */
-  const handleModeChange = useCallback(async (mode: SimulationMode) => {
+  const handleModeClick = async (mode: SimulationMode) => {
     setModeLoading(true);
     try {
-      await setSimulationMode(mode);
-      setCurrentMode(mode);
-      setError(null);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed to change mode");
+      await handleModeChange(mode);
     } finally {
       setModeLoading(false);
     }
-  }, []);
+  };
 
-  /**
-   * Poll API for data updates
-   */
-  useEffect(() => {
-    void load();
-    const id = window.setInterval(() => void load(), POLL_MS);
-    return () => window.clearInterval(id);
-  }, [load]);
-
-  /**
-   * Chart data configuration
-   */
-  const chartData = useMemo(
-    () => ({
-      labels: history.map((h) => h.t),
-      datasets: [
-        {
-          label: "Temperature (°C)",
-          data: history.map((h) => h.temperature),
-          borderColor: "#58a6ff",
-          backgroundColor: "rgba(88, 166, 255, 0.12)",
-          fill: true,
-          tension: 0.35,
-          yAxisID: "y",
-        },
-        {
-          label: "Occupancy (%)",
-          data: history.map((h) => h.occupancy),
-          borderColor: "#a371f7",
-          backgroundColor: "rgba(163, 113, 247, 0.08)",
-          fill: true,
-          tension: 0.35,
-          yAxisID: "y1",
-        },
-        {
-          label: "Energy (units)",
-          data: history.map((h) => h.energy),
-          borderColor: "#3fb950",
-          backgroundColor: "rgba(63, 185, 80, 0.08)",
-          fill: true,
-          tension: 0.35,
-          yAxisID: "y2",
-        },
-      ],
-    }),
-    [history]
-  );
-
-  /**
-   * Chart options
-   */
-  const chartOptions = useMemo(
-    () => ({
-      responsive: true,
-      maintainAspectRatio: false,
-      interaction: { mode: "index" as const, intersect: false },
-      plugins: {
-        legend: {
-          labels: { color: "#8b949e", font: { family: "Outfit" } },
-        },
-        title: {
-          display: true,
-          text: "Live telemetry (last samples)",
-          color: "#e6edf3",
-          font: { family: "Outfit", size: 14, weight: "600" as const },
-        },
-      },
-      scales: {
-        x: {
-          ticks: { color: "#8b949e", maxRotation: 45, minRotation: 45 },
-          grid: { color: "rgba(48, 54, 61, 0.6)" },
-        },
-        y: {
-          type: "linear" as const,
-          display: true,
-          position: "left" as const,
-          title: { display: true, text: "°C", color: "#58a6ff" },
-          ticks: { color: "#8b949e" },
-          grid: { color: "rgba(48, 54, 61, 0.6)" },
-        },
-        y1: {
-          type: "linear" as const,
-          display: true,
-          position: "right" as const,
-          title: { display: true, text: "Occ %", color: "#a371f7" },
-          ticks: { color: "#8b949e" },
-          grid: { drawOnChartArea: false },
-        },
-        y2: {
-          type: "linear" as const,
-          display: true,
-          position: "right" as const,
-          offset: true,
-          title: { display: true, text: "Energy", color: "#3fb950" },
-          ticks: { color: "#8b949e" },
-          grid: { drawOnChartArea: false },
-        },
-      },
-    }),
-    []
-  );
+  const glowColor = getGlowColor(currentMode);
 
   return (
     <div className="app">
-      <header className="header">
-        <div>
-          <h1>Live Campus Digital Twin</h1>
-          <p className="subtitle">DevOps-enabled dashboard · realtime telemetry · mode control</p>
+      {/* DevOps Meta-Bar Header */}
+      <header className="devops-header" style={{ '--glow-color': glowColor } as any}>
+        <div className="header-content">
+          <div className="header-title">
+            <h1>🚀 Campus Digital Twin</h1>
+            <p className="subtitle">Enterprise-Grade Monitoring Dashboard</p>
+          </div>
+          <nav className="header-badge-group">
+            <div className="badge-item">
+              <span className="badge-label">Environment</span>
+              <span className="badge-value">Production/K8s</span>
+            </div>
+            <div className="badge-item">
+              <span className="badge-label">Version</span>
+              <span className="badge-value">v2.1.0-stable</span>
+            </div>
+            <div className="badge-item">
+              <span className="badge-label">Uptime</span>
+              <span className="badge-value">{formatUptime(uptime)}</span>
+            </div>
+            <div className="badge-item">
+              <span className="badge-label">Latency</span>
+              <span className="badge-value">{latency}ms</span>
+            </div>
+          </nav>
         </div>
-        <div className="badge">DevOps v2.0</div>
       </header>
 
       {/* Critical Alert Popup */}
@@ -265,7 +147,7 @@ export default function App() {
           <span className="critical-icon">⚠️</span>
           <div>
             <strong>CRITICAL ALERT!</strong>
-            <p>System has entered critical state. Auto-recovery in 10 seconds.</p>
+            <p>System has entered critical state. Auto-recovery in progress.</p>
           </div>
           <button
             className="popup-close"
@@ -280,7 +162,7 @@ export default function App() {
       {loading && !data && (
         <div className="loading-banner" role="status" aria-live="polite">
           <span className="spinner" aria-hidden />
-          Loading campus data…
+          Connecting to sensor cluster…
         </div>
       )}
 
@@ -290,135 +172,215 @@ export default function App() {
         </div>
       )}
 
-      {/* System Health Panel */}
+      {/* Main Content */}
       {data && (
-        <section className="system-health">
-          <div className="health-item">
-            <span className="health-label">System Status</span>
-            <span className={`health-value ${data.system_health.status.toLowerCase()}`}>
-              🟢 {data.system_health.status}
-            </span>
+        <div className="content-wrapper">
+          {/* System Health & Mode Control */}
+          <div className="control-panel">
+            {/* System Status Card */}
+            <section className="system-health-card">
+              <h2 className="card-title">System Status</h2>
+              <div className="health-grid">
+                <div className="health-item">
+                  <span className="health-label">Status</span>
+                  <span className={`health-value status-${data.system_health.status.toLowerCase()}`}>
+                    🟢 {data.system_health.status}
+                  </span>
+                </div>
+                <div className="health-item">
+                  <span className="health-label">Mode</span>
+                  <span className={`health-value mode-${currentMode}`}>
+                    {currentMode.toUpperCase()}
+                  </span>
+                </div>
+              </div>
+            </section>
+
+            {/* Mode Control */}
+            <section className="mode-control-section">
+              <label className="mode-label">Simulation Mode:</label>
+              <div className="mode-buttons">
+                <button
+                  className={`mode-btn mode-normal ${currentMode === 'normal' ? 'active' : ''}`}
+                  onClick={() => handleModeClick('normal')}
+                  disabled={modeLoading}
+                  aria-pressed={currentMode === 'normal'}
+                >
+                  🟢 Normal
+                </button>
+                <button
+                  className={`mode-btn mode-warning ${currentMode === 'warning' ? 'active' : ''}`}
+                  onClick={() => handleModeClick('warning')}
+                  disabled={modeLoading}
+                  aria-pressed={currentMode === 'warning'}
+                >
+                  🟡 Warning
+                </button>
+                <button
+                  className={`mode-btn mode-critical ${currentMode === 'critical' ? 'active' : ''}`}
+                  onClick={() => handleModeClick('critical')}
+                  disabled={modeLoading}
+                  aria-pressed={currentMode === 'critical'}
+                >
+                  🔴 Critical
+                </button>
+              </div>
+            </section>
           </div>
-          <div className="health-item">
-            <span className="health-label">Uptime</span>
-            <span className="health-value">{Math.floor(data.system_health.uptime_seconds)}s</span>
-          </div>
-          <div className="health-item">
-            <span className="health-label">Current Mode</span>
-            <span className={`health-value mode-${data.mode}`}>{data.mode.toUpperCase()}</span>
-          </div>
-          <div className="health-item">
-            <span className="health-label">Timestamp</span>
-            <span className="health-value">{formatTime(data.system_health.timestamp)}</span>
-          </div>
-        </section>
+
+          {/* Metrics Cards with Neon Glow */}
+          <section className="metrics-grid">
+            <article
+              className="metric-card"
+              style={{ '--neon-color': '#06b6d4' } as any}
+            >
+              <div className="metric-header">
+                <span className="metric-icon">🌡️</span>
+                <span className="metric-label">Temperature</span>
+              </div>
+              <div className="metric-value" style={{ color: '#06b6d4' }}>
+                {data.temperature}°C
+              </div>
+              <div className="metric-spark">Live sensor data</div>
+            </article>
+
+            <article
+              className="metric-card"
+              style={{ '--neon-color': '#a78bfa' } as any}
+            >
+              <div className="metric-header">
+                <span className="metric-icon">👥</span>
+                <span className="metric-label">Occupancy</span>
+              </div>
+              <div className="metric-value" style={{ color: '#a78bfa' }}>
+                {data.occupancy}%
+              </div>
+              <div className="metric-spark">Indoor presence</div>
+            </article>
+
+            <article
+              className="metric-card"
+              style={{ '--neon-color': '#10b981' } as any}
+            >
+              <div className="metric-header">
+                <span className="metric-icon">⚡</span>
+                <span className="metric-label">Energy</span>
+              </div>
+              <div className="metric-value" style={{ color: '#10b981' }}>
+                {data.energy} kWh
+              </div>
+              <div className="metric-spark">Real-time consumption</div>
+            </article>
+
+            <article className="alert-card">
+              <div className="metric-header">
+                <span className="metric-icon">🔔</span>
+                <span className="metric-label">Alert Status</span>
+              </div>
+              <div
+                className="alert-badge-large"
+                style={{ color: alertColor(data.alert) }}
+              >
+                {data.alert}
+              </div>
+              <div className="metric-spark">System state</div>
+            </article>
+          </section>
+
+          {/* Chart Section */}
+          <section className="chart-section">
+            <div className="chart-header">
+              <h2>Live Telemetry</h2>
+              <p className="chart-subtitle">Last {history.length} samples • Smooth monotone curves</p>
+            </div>
+            {history.length === 0 ? (
+              <p className="chart-empty">Collecting sensor data...</p>
+            ) : (
+              <ResponsiveContainer width="100%" height={400}>
+                <LineChart data={history} margin={{ top: 5, right: 30, left: 0, bottom: 5 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="rgba(255, 255, 255, 0.05)" />
+                  <XAxis
+                    dataKey="timestamp"
+                    tick={{ fill: 'rgba(255, 255, 255, 0.5)', fontSize: 12 }}
+                  />
+                  <YAxis tick={{ fill: 'rgba(255, 255, 255, 0.5)', fontSize: 12 }} />
+                  <Tooltip content={<CustomTooltip />} />
+                  <Legend />
+                  <Line
+                    type="monotone"
+                    dataKey="temperature"
+                    name="Temperature (°C)"
+                    stroke="#06b6d4"
+                    dot={false}
+                    strokeWidth={2}
+                    isAnimationActive={false}
+                  />
+                  <Line
+                    type="monotone"
+                    dataKey="occupancy"
+                    name="Occupancy (%)"
+                    stroke="#a78bfa"
+                    dot={false}
+                    strokeWidth={2}
+                    isAnimationActive={false}
+                  />
+                  <Line
+                    type="monotone"
+                    dataKey="energy"
+                    name="Energy (kWh)"
+                    stroke="#10b981"
+                    dot={false}
+                    strokeWidth={2}
+                    isAnimationActive={false}
+                  />
+                </LineChart>
+              </ResponsiveContainer>
+            )}
+          </section>
+
+          {/* Alert History */}
+          <section className="alert-history-section">
+            <button
+              className="toggle-history-btn"
+              onClick={() => setShowAlertHistory(!showAlertHistory)}
+              aria-expanded={showAlertHistory}
+            >
+              {showAlertHistory ? '👁️ Hide' : '👀 Show'} Alert History ({data.alerts.length})
+            </button>
+
+            {showAlertHistory && (
+              <div className="alert-history-panel">
+                <h3>Alert History</h3>
+                {data.alerts.length === 0 ? (
+                  <p className="muted">No alerts recorded.</p>
+                ) : (
+                  <ul className="alert-list">
+                    {[...data.alerts].reverse().map((alert: Alert, idx: number) => (
+                      <li key={idx} className={`alert-item alert-${alert.alert.toLowerCase()}`}>
+                        <span className="alert-time">{new Date(alert.timestamp).toLocaleTimeString()}</span>
+                        <span className="alert-badge">{alert.alert}</span>
+                        <span className="alert-details">
+                          {alert.temperature}°C | {alert.occupancy}% | {alert.energy} kWh
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            )}
+          </section>
+        </div>
       )}
 
-      {/* Mode Control Buttons */}
-      <section className="mode-control">
-        <label className="mode-label">Simulation Mode:</label>
-        <div className="mode-buttons">
-          <button
-            className={`mode-btn mode-normal ${currentMode === "normal" ? "active" : ""}`}
-            onClick={() => handleModeChange("normal")}
-            disabled={modeLoading}
-            aria-pressed={currentMode === "normal"}
-          >
-            🟢 Normal
-          </button>
-          <button
-            className={`mode-btn mode-warning ${currentMode === "warning" ? "active" : ""}`}
-            onClick={() => handleModeChange("warning")}
-            disabled={modeLoading}
-            aria-pressed={currentMode === "warning"}
-          >
-            🟡 Warning
-          </button>
-          <button
-            className={`mode-btn mode-critical ${currentMode === "critical" ? "active" : ""}`}
-            onClick={() => handleModeChange("critical")}
-            disabled={modeLoading}
-            aria-pressed={currentMode === "critical"}
-          >
-            🔴 Critical
-          </button>
+      {/* DevOps Footer Meta-Bar */}
+      <footer className="devops-footer">
+        <div className="footer-content">
+          <span className="footer-text">🔬 Campus Digital Twin v2.1.0</span>
+          <span className="footer-divider">—</span>
+          <span className="footer-text">React 18 + Vite + Recharts</span>
+          <span className="footer-divider">—</span>
+          <span className="footer-text">K8s Orchestrated</span>
         </div>
-      </section>
-
-      {/* Metrics Cards */}
-      <section className="cards">
-        <article className="card">
-          <span className="card-label">Temperature</span>
-          <span className="card-value">
-            {data ? `${data.temperature}°C` : "—"}
-          </span>
-        </article>
-        <article className="card">
-          <span className="card-label">Occupancy</span>
-          <span className="card-value">{data ? `${data.occupancy}%` : "—"}</span>
-        </article>
-        <article className="card">
-          <span className="card-label">Energy</span>
-          <span className="card-value">{data ? `${data.energy} kWh` : "—"}</span>
-        </article>
-        <article className="card card-alert">
-          <span className="card-label">Alert</span>
-          <span
-            className="card-value alert-pill"
-            style={{
-              color: data ? alertColor(data.alert) : "var(--muted)",
-              borderColor: data ? alertColor(data.alert) : "var(--border)",
-            }}
-          >
-            {data ? data.alert : "—"}
-          </span>
-        </article>
-      </section>
-
-      {/* Chart */}
-      <section className="chart-wrap">
-        {history.length === 0 && !loading ? (
-          <p className="muted">No chart data yet.</p>
-        ) : (
-          <Line data={chartData} options={chartOptions} />
-        )}
-      </section>
-
-      {/* Alert History Toggle */}
-      <section className="alert-history-section">
-        <button
-          className="toggle-history-btn"
-          onClick={() => setShowAlertHistory(!showAlertHistory)}
-          aria-expanded={showAlertHistory}
-        >
-          {showAlertHistory ? "Hide" : "Show"} Alert History ({data?.alerts.length || 0})
-        </button>
-
-        {/* Alert History List */}
-        {showAlertHistory && (
-          <div className="alert-history">
-            <h3>Alert History (Last 10)</h3>
-            {!data || data.alerts.length === 0 ? (
-              <p className="muted">No alerts yet.</p>
-            ) : (
-              <ul className="alert-list">
-                {[...data.alerts].reverse().map((alert: Alert, idx: number) => (
-                  <li key={idx} className={`alert-item alert-${alert.alert.toLowerCase()}`}>
-                    <span className="alert-time">{formatTime(alert.timestamp)}</span>
-                    <span className="alert-badge">{alert.alert}</span>
-                    <span className="alert-details">
-                      {alert.temperature}°C | {alert.occupancy}% | {alert.energy} kWh
-                    </span>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </div>
-        )}
-      </section>
-
-      <footer className="footer">
-        <span>FastAPI backend v2.0 · React + Chart.js · Prometheus metrics · Dark theme</span>
       </footer>
     </div>
   );
