@@ -1,0 +1,23 @@
+# Serves static React app; nginx proxies /api/* to Service `backend:8000`.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: frontend
+  labels:
+    app: campus-frontend
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: campus-frontend
+  template:
+    metadata:
+      labels:
+        app: campus-frontend
+    spec:
+      containers:
+        - name: web
+          image: digital-twin-devops-frontend:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 3000

@@ -1,0 +1,56 @@
+# Docker Compose v2+ (needs `depends_on: condition: service_healthy`).
+# Frontend reaches the API via Docker DNS name `backend` on the internal network only.
+name: digital-twin-devops
+
+services:
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    ports:
+      - "8000:8000"
+    networks:
+      - campus
+    init: true
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=5)",
+        ]
+      interval: 10s
+      timeout: 8s
+      retries: 5
+      start_period: 40s
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    ports:
+      - "3000:3000"
+    networks:
+      - campus
+    init: true
+    depends_on:
+      backend:
+        condition: service_healthy
+    healthcheck:
+      # BusyBox wget (nginx:alpine); avoids --spider quirks on some images
+      test:
+        [
+          "CMD-SHELL",
+          "wget -q -O /dev/null http://127.0.0.1:3000/ || exit 1",
+        ]
+      interval: 15s
+      timeout: 8s
+      retries: 5
+      start_period: 30s
+    restart: unless-stopped
+
+networks:
+  campus:
+    driver: bridge

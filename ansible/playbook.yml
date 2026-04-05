@@ -1,0 +1,25 @@
+---
+# Install Docker Engine on Amazon Linux 2023 (targets EC2 from Terraform).
+# Run: ansible-playbook -i inventory.ini playbook.yml
+- name: Install Docker on EC2
+  hosts: campus_servers
+  become: true
+
+  tasks:
+    - name: Ensure Docker is installed (Amazon Linux 2023)
+      ansible.builtin.dnf:
+        name: docker
+        state: present
+        update_cache: true
+
+    - name: Enable and start Docker service
+      ansible.builtin.service:
+        name: docker
+        state: started
+        enabled: true
+
+    - name: Add ec2-user to docker group (optional, for passwordless docker CLI)
+      ansible.builtin.user:
+        name: ec2-user
+        groups: docker
+        append: true

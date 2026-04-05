@@ -1,0 +1,35 @@
+# Backend API: 2 replicas for availability; serves GET /data on port 8000.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: backend
+  labels:
+    app: campus-backend
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: campus-backend
+  template:
+    metadata:
+      labels:
+        app: campus-backend
+    spec:
+      containers:
+        - name: api
+          image: digital-twin-devops-backend:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8000
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 3
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 10
+            periodSeconds: 15
