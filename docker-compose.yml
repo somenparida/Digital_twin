@@ -131,7 +131,7 @@ services:
   # MongoDB - Document Database for Alerts & Metadata
   # ============================================================================
   mongodb:
-    image: mongo:7.0-alpine
+    image: mongo:latest
     ports:
       - "27017:27017"
     networks:
@@ -150,6 +150,9 @@ services:
       retries: 5
 
   # ============================================================================
+  # Grafana - Visualization Dashboard
+  # ============================================================================
+  grafana:
     image: grafana/grafana:latest
     ports:
       - "3001:3000"  # Note: Grafana runs on 3000 internally, exposed on 3001 externally
@@ -164,8 +167,6 @@ services:
       GF_SECURITY_ADMIN_USER: admin
       # Disable login screen on first run
       GF_AUTH_ANONYMOUS_ENABLED: "false"
-      # Data source auto-provisioning
-      GF_INSTALL_PLUGINS: "grafana-piechart-panel"
     depends_on:
       prometheus:
         condition: service_healthy

@@ -179,7 +179,7 @@ except ConnectionFailure as e:
 # ============================================================================
 def write_telemetry_to_influxdb(telemetry: dict, mode: SimulationMode) -> bool:
     """Write telemetry data to InfluxDB."""
-    if not influxdb_write_api or not influxdb_client:
+    if influxdb_write_api is None or influxdb_client is None:
         return False
     
     try:
@@ -193,7 +193,7 @@ def write_telemetry_to_influxdb(telemetry: dict, mode: SimulationMode) -> bool:
 
 def store_alert_to_mongodb(alert_data: dict) -> bool:
     """Store alert to MongoDB."""
-    if not mongodb_db:
+    if mongodb_db is None:
         return False
     
     try:
@@ -210,7 +210,7 @@ def store_alert_to_mongodb(alert_data: dict) -> bool:
 
 def query_latest_telemetry_from_influxdb() -> dict | None:
     """Query the latest telemetry from InfluxDB (if available)."""
-    if not influxdb_client:
+    if influxdb_client is None:
         return None
     
     try:

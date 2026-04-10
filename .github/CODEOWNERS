@@ -1,0 +1,16 @@
+# Default ownership for all files in this repository
+* @somenparida
+
+# Backend and API
+/backend/ @somenparida
+
+# Frontend dashboard
+/frontend/ @somenparida
+
+# DevOps and infrastructure
+/.github/ @somenparida
+/docker-compose.yml @somenparida
+/k8s/ @somenparida
+/terraform/ @somenparida
+/ansible/ @somenparida
+/scripts/ @somenparida

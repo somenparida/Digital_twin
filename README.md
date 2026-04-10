@@ -103,10 +103,18 @@ Compose **healthchecks** wait until the API responds on `/health` before startin
 
 This repository is configured with a full CI/CD pipeline using GitHub Actions. On every push to the `main` branch, the following occurs:
 1. Backend tests are run.
-2. Docker images for the frontend and backend are built and pushed to Docker Hub.
-3. The application is deployed to a Kubernetes cluster.
+2. Docker images for the frontend and backend are built.
+3. On `main` pushes, images are published to GitHub Container Registry (GHCR).
+4. On `main` pushes, the application is deployed to an EC2 host via SSH and Docker Compose.
 
 Quick start: **`scripts/compose-up.ps1`** (Windows) or **`scripts/compose-up.sh`** (Git Bash / Linux / macOS).
+
+## Collaboration workflow
+
+- Create feature branches from `main` (for example, `feat/<topic>` or `fix/<topic>`).
+- Open a pull request for every change and request review before merge.
+- Ensure CI passes before merging.
+- Prefer squash merges to keep history clean and traceable.
 ## Database Integration — InfluxDB & MongoDB
 
 ### Overview
@@ -182,6 +190,26 @@ See **`docs/screenshots/README.md`** for filenames and ideas. Example:
 | `docs/screenshots/dashboard.png` | Dark dashboard with metrics and chart |
 | `docs/screenshots/docker-compose.png` | `docker compose ps` or running containers |
 
+### CI Evidence Checklist (for assessment)
+
+Capture and include these screenshots so evaluators can verify CI/CD quickly:
+
+1. **Workflow run summary**
+  - Suggested file: `docs/screenshots/ci-run-summary.png`
+  - Must show: one full successful run on `main`.
+2. **Backend tests passed**
+  - Suggested file: `docs/screenshots/ci-backend-tests.png`
+  - Must show: `test-backend` job completed successfully.
+3. **Frontend build passed**
+  - Suggested file: `docs/screenshots/ci-frontend-build.png`
+  - Must show: `test-frontend-build` job completed successfully.
+4. **Image publish stage**
+  - Suggested file: `docs/screenshots/ci-ghcr-push.png`
+  - Must show: `deploy` job pushed backend and frontend images to GHCR.
+5. **Runtime deployment stage**
+  - Suggested file: `docs/screenshots/ci-ec2-deploy.png`
+  - Must show: `deploy-to-ec2` job completed and `docker compose` restart output.
+
 ## CI/CD (GitHub Actions)
 
 Workflow: **`.github/workflows/ci-cd.yml`**
@@ -189,11 +217,16 @@ Workflow: **`.github/workflows/ci-cd.yml`**
 1. **Checkout** the repository.
 2. **Python 3.12:** install **`backend/requirements-dev.txt`** and run **`pytest`** (`test-backend` job).
 3. **Docker Buildx** for caching (runs after tests pass).
-4. **Build** backend and frontend images (`digital-twin-devops-backend:ci`, `digital-twin-devops-frontend:ci`) with **push: false** for safe CI on forks.
+4. **Build** backend and frontend images in CI.
+5. **Push to GHCR** on `main` using `GITHUB_TOKEN`.
+6. **Deploy to EC2** on `main` via SSH by pulling updated images and restarting `docker compose`.
 
 **Dependabot:** **`.github/dependabot.yml`** opens weekly update PRs for **pip** (backend), **npm** (frontend), and **GitHub Actions**.
 
-To **push to Docker Hub** on `main`, add repository secrets `DOCKERHUB_USERNAME` and `DOCKERHUB_TOKEN`, then uncomment and adjust the optional push block at the bottom of the workflow file (see inline comments).
+### Required GitHub secrets for deployment
+
+- `EC2_HOST`: Public IP or DNS of the target EC2 instance.
+- `EC2_SSH_KEY`: Private SSH key content for the deployment user.
 
 ## Kubernetes deployment
 

@@ -1,4 +1,4 @@
-import { useMemo, useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect } from "react";
 import {
   LineChart,
   Line,
@@ -9,7 +9,7 @@ import {
   Legend,
   ResponsiveContainer,
 } from "recharts";
-import { useSensorData, type SensorRecord } from "./useSensorData";
+import { useSensorData } from "./useSensorData";
 import { type SimulationMode, type CampusPayload, type Alert } from "./api";
 import "./App.css";
 

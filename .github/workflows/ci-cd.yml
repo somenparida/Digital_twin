@@ -33,8 +33,29 @@ jobs:
         working-directory: backend
         run: python -m pytest
 
+  test-frontend-build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: frontend/.nvmrc
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: npm ci
+
+      - name: Build frontend
+        working-directory: frontend
+        run: npm run build
+
   build:
-    needs: [test-backend]
+    needs: [test-backend, test-frontend-build]
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
