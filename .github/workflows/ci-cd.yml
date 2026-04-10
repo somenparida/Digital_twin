@@ -123,13 +123,18 @@ jobs:
 
   deploy-to-ec2:
     needs: [deploy]
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && secrets.EC2_HOST != '' && secrets.EC2_SSH_KEY != ''
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      - name: Skip deploy when EC2 secrets are missing
+        if: ${{ secrets.EC2_HOST == '' || secrets.EC2_SSH_KEY == '' }}
+        run: echo "Skipping EC2 deploy: set EC2_HOST and EC2_SSH_KEY repository secrets to enable deployment."
+
       - name: Deploy to EC2 via SSH
+        if: ${{ secrets.EC2_HOST != '' && secrets.EC2_SSH_KEY != '' }}
         uses: appleboy/ssh-action@master
         with:
           host: ${{ secrets.EC2_HOST }}
