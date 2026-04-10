@@ -154,16 +154,42 @@ jobs:
           key_path: /tmp/deploy_key
           port: 22
           script: |
+            set -e
+            PROJECT_DIR="/home/ec2-user/Digital_twin"
+
+            # Bootstrap prerequisites on fresh Amazon Linux hosts.
+            if ! command -v git >/dev/null 2>&1; then
+              sudo dnf install -y git
+            fi
+            if ! command -v docker >/dev/null 2>&1; then
+              sudo dnf install -y docker
+            fi
+            sudo systemctl enable --now docker
+
+            # Prefer Docker Compose plugin; fallback to standalone binary when unavailable.
+            if ! sudo docker compose version >/dev/null 2>&1; then
+              if ! command -v docker-compose >/dev/null 2>&1; then
+                sudo dnf install -y curl
+                sudo curl -L "https://github.com/docker/compose/releases/download/v2.24.0/docker-compose-linux-x86_64" -o /usr/local/bin/docker-compose
+                sudo chmod +x /usr/local/bin/docker-compose
+              fi
+              COMPOSE_CMD="sudo docker-compose"
+            else
+              COMPOSE_CMD="sudo docker compose"
+            fi
+
             # Pull latest deployment files
-            cd /home/ec2-user/Digital_twin || git clone https://github.com/${{ github.repository }}.git /home/ec2-user/Digital_twin
-            cd /home/ec2-user/Digital_twin
+            if [ ! -d "$PROJECT_DIR/.git" ]; then
+              git clone https://github.com/${{ github.repository }}.git "$PROJECT_DIR"
+            fi
+            cd "$PROJECT_DIR"
             git pull origin main
-            
-            # Update docker-compose with latest image tags (use GitHub Container Registry)
+
+            # Update docker-compose with latest image tags (GitHub Container Registry)
             sed -i "s|image:.*backend.*|image: ${{ env.REGISTRY }}/${{ github.repository_owner }}/${{ env.IMAGE_BACKEND }}:latest|g" docker-compose.yml
             sed -i "s|image:.*frontend.*|image: ${{ env.REGISTRY }}/${{ github.repository_owner }}/${{ env.IMAGE_FRONTEND }}:latest|g" docker-compose.yml
-            
+
             # Restart services
-            docker compose pull
-            docker compose up -d --remove-orphans
-            docker compose ps
+            $COMPOSE_CMD pull
+            $COMPOSE_CMD up -d --remove-orphans
+            $COMPOSE_CMD ps
