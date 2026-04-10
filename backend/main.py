@@ -373,7 +373,7 @@ def get_alert_history() -> dict:
     mongodb_alerts = []
     
     # Query MongoDB for historical alerts
-    if mongodb_db:
+    if mongodb_db is not None:
         try:
             alerts_collection = mongodb_db["alerts"]
             # Get last 100 alerts from MongoDB

@@ -36,7 +36,11 @@ def test_data_shape_and_ranges_normal_mode() -> None:
     
     # Check required fields
     required_fields = {"temperature", "occupancy", "energy", "alert", "mode", "alerts", "system_health"}
-    assert set(data.keys()) == required_fields
+    assert required_fields.issubset(set(data.keys()))
+
+    # Database connectivity metadata is expected in v2.0
+    assert "database_status" in data
+    assert isinstance(data["database_status"], dict)
     
     # Validate normal mode ranges
     assert isinstance(data["temperature"], (int, float))
@@ -160,10 +164,10 @@ def test_alerts_endpoint() -> None:
     assert response.status_code == 200
     data = response.json()
     
-    assert "alerts" in data
+    assert "alerts_memory" in data
     assert "total_count" in data
-    assert isinstance(data["alerts"], list)
-    assert len(data["alerts"]) == data["total_count"]
+    assert isinstance(data["alerts_memory"], list)
+    assert len(data["alerts_memory"]) == data["total_count"]
 
 
 def test_alert_structure() -> None:
@@ -173,7 +177,7 @@ def test_alert_structure() -> None:
     data = response.json()
     
     if data["total_count"] > 0:
-        alert = data["alerts"][0]
+        alert = data["alerts_memory"][0]
         required_fields = {"timestamp", "alert", "temperature", "occupancy", "energy"}
         assert set(alert.keys()) == required_fields
 
