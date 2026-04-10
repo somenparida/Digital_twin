@@ -125,21 +125,24 @@ jobs:
     needs: [deploy]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
+    env:
+      EC2_HOST: ${{ secrets.EC2_HOST }}
+      EC2_SSH_KEY: ${{ secrets.EC2_SSH_KEY }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
       - name: Skip deploy when EC2 secrets are missing
-        if: ${{ secrets.EC2_HOST == '' || secrets.EC2_SSH_KEY == '' }}
+        if: ${{ env.EC2_HOST == '' || env.EC2_SSH_KEY == '' }}
         run: 'echo "Skipping EC2 deploy: set EC2_HOST and EC2_SSH_KEY repository secrets to enable deployment."'
 
       - name: Deploy to EC2 via SSH
-        if: ${{ secrets.EC2_HOST != '' && secrets.EC2_SSH_KEY != '' }}
+        if: ${{ env.EC2_HOST != '' && env.EC2_SSH_KEY != '' }}
         uses: appleboy/ssh-action@master
         with:
-          host: ${{ secrets.EC2_HOST }}
+          host: ${{ env.EC2_HOST }}
           username: ec2-user
-          key: ${{ secrets.EC2_SSH_KEY }}
+          key: ${{ env.EC2_SSH_KEY }}
           port: 22
           script: |
             # Pull latest deployment files
