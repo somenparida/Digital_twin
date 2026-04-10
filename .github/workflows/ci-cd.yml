@@ -170,8 +170,14 @@ jobs:
             # Prefer Docker Compose plugin; fallback to standalone binary when unavailable.
             if ! sudo docker compose version >/dev/null 2>&1; then
               if ! command -v docker-compose >/dev/null 2>&1; then
-                sudo dnf install -y curl
-                sudo curl -L "https://github.com/docker/compose/releases/download/v2.24.0/docker-compose-linux-x86_64" -o /usr/local/bin/docker-compose
+                if command -v curl >/dev/null 2>&1; then
+                  sudo curl -L "https://github.com/docker/compose/releases/download/v2.24.0/docker-compose-linux-x86_64" -o /usr/local/bin/docker-compose
+                elif command -v wget >/dev/null 2>&1; then
+                  sudo wget -O /usr/local/bin/docker-compose "https://github.com/docker/compose/releases/download/v2.24.0/docker-compose-linux-x86_64"
+                else
+                  sudo dnf install -y wget
+                  sudo wget -O /usr/local/bin/docker-compose "https://github.com/docker/compose/releases/download/v2.24.0/docker-compose-linux-x86_64"
+                fi
                 sudo chmod +x /usr/local/bin/docker-compose
               fi
               COMPOSE_CMD="sudo docker-compose"
