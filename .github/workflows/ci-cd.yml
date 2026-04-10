@@ -123,7 +123,7 @@ jobs:
 
   deploy-to-ec2:
     needs: [deploy]
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && secrets.EC2_HOST != '' && secrets.EC2_SSH_KEY != ''
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
