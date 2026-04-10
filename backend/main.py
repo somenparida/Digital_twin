@@ -10,10 +10,12 @@ Features:
 """
 import os
 import random
+import socket
 import threading
 import time
-from datetime import datetime, timedelta
+from datetime import UTC, datetime
 from typing import Literal
+from urllib.parse import urlparse
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -43,7 +45,7 @@ class SimulationState:
         self.mode: SimulationMode = "normal"
         self.last_10_alerts: list[dict] = []  # [{timestamp, alert, temperature, occupancy, energy}, ...]
         self.system_status: SystemStatus = "UP"
-        self.system_start_time = datetime.utcnow().isoformat()
+        self.system_start_time = datetime.now(UTC).isoformat()
         self.critical_start_time: float | None = None  # Track when critical mode started
         self.lock = threading.Lock()
     
@@ -132,6 +134,20 @@ app.add_middleware(
 # ============================================================================
 # DATABASE INITIALIZATION
 # ============================================================================
+def _host_resolves(url: str) -> bool:
+    """Return True when the URL host is resolvable on this machine."""
+    try:
+        parsed = urlparse(url)
+        host = parsed.hostname
+        port = parsed.port or (443 if parsed.scheme == "https" else 80)
+        if not host:
+            return False
+        socket.getaddrinfo(host, port)
+        return True
+    except Exception:
+        return False
+
+
 # InfluxDB connection
 INFLUXDB_URL = os.getenv("INFLUXDB_URL", "http://influxdb:8086")
 INFLUXDB_TOKEN = os.getenv("INFLUXDB_TOKEN", "my-admin-token")
@@ -141,21 +157,24 @@ INFLUXDB_BUCKET = os.getenv("INFLUXDB_BUCKET", "sensors")
 influxdb_client = None
 influxdb_write_api = None
 
-try:
-    influxdb_client = InfluxDBClient(
-        url=INFLUXDB_URL,
-        token=INFLUXDB_TOKEN,
-        org=INFLUXDB_ORG,
-        timeout=5000,
-    )
-    influxdb_write_api = influxdb_client.write_api(write_type=SYNCHRONOUS)
-    # Verify connection
-    influxdb_client.ping()
-    print("[✓] InfluxDB connected successfully")
-except Exception as e:
-    print(f"[!] InfluxDB connection failed: {e}. Will use simulation only.")
-    influxdb_client = None
-    influxdb_write_api = None
+if _host_resolves(INFLUXDB_URL):
+    try:
+        influxdb_client = InfluxDBClient(
+            url=INFLUXDB_URL,
+            token=INFLUXDB_TOKEN,
+            org=INFLUXDB_ORG,
+            timeout=5000,
+        )
+        influxdb_write_api = influxdb_client.write_api(write_type=SYNCHRONOUS)
+        # Verify connection
+        influxdb_client.ping()
+        print("[✓] InfluxDB connected successfully")
+    except Exception as e:
+        print(f"[!] InfluxDB connection failed: {e}. Will use simulation only.")
+        influxdb_client = None
+        influxdb_write_api = None
+else:
+    print("[!] InfluxDB host is not resolvable in this environment. Will use simulation only.")
 
 # MongoDB connection
 MONGODB_URL = os.getenv("MONGODB_URL", "mongodb://admin:changeme@mongodb:27017/")
@@ -164,21 +183,26 @@ MONGODB_DB = os.getenv("MONGODB_DB", "digital_twin")
 mongodb_client = None
 mongodb_db = None
 
-try:
-    mongodb_client = MongoClient(MONGODB_URL, serverSelectionTimeoutMS=5000)
-    mongodb_client.admin.command("ping")  # Test connection
-    mongodb_db = mongodb_client[MONGODB_DB]
-    print("[✓] MongoDB connected successfully")
-except ConnectionFailure as e:
-    print(f"[!] MongoDB connection failed: {e}. Alerts will be stored in memory only.")
-    mongodb_client = None
-    mongodb_db = None
+if _host_resolves(MONGODB_URL):
+    try:
+        mongodb_client = MongoClient(MONGODB_URL, serverSelectionTimeoutMS=5000)
+        mongodb_client.admin.command("ping")  # Test connection
+        mongodb_db = mongodb_client[MONGODB_DB]
+        print("[✓] MongoDB connected successfully")
+    except ConnectionFailure as e:
+        print(f"[!] MongoDB connection failed: {e}. Alerts will be stored in memory only.")
+        mongodb_client = None
+        mongodb_db = None
+else:
+    print("[!] MongoDB host is not resolvable in this environment. Alerts will be stored in memory only.")
 
 # ============================================================================
 # DATABASE HELPER FUNCTIONS
 # ============================================================================
 def write_telemetry_to_influxdb(telemetry: dict, mode: SimulationMode) -> bool:
     """Write telemetry data to InfluxDB."""
+    global influxdb_client, influxdb_write_api
+
     if influxdb_write_api is None or influxdb_client is None:
         return False
     
@@ -188,11 +212,16 @@ def write_telemetry_to_influxdb(telemetry: dict, mode: SimulationMode) -> bool:
         return True
     except Exception as e:
         print(f"[!] InfluxDB write error: {e}")
+        # Disable failed client to avoid repeated retries on every request.
+        influxdb_write_api = None
+        influxdb_client = None
         return False
 
 
 def store_alert_to_mongodb(alert_data: dict) -> bool:
     """Store alert to MongoDB."""
+    global mongodb_client, mongodb_db
+
     if mongodb_db is None:
         return False
     
@@ -200,16 +229,21 @@ def store_alert_to_mongodb(alert_data: dict) -> bool:
         alerts_collection = mongodb_db["alerts"]
         alerts_collection.insert_one({
             **alert_data,
-            "stored_at": datetime.utcnow(),
+            "stored_at": datetime.now(UTC),
         })
         return True
     except Exception as e:
         print(f"[!] MongoDB insert error: {e}")
+        # Disable failed client to avoid repeated retries on every request.
+        mongodb_db = None
+        mongodb_client = None
         return False
 
 
 def query_latest_telemetry_from_influxdb() -> dict | None:
     """Query the latest telemetry from InfluxDB (if available)."""
+    global influxdb_client, influxdb_write_api
+
     if influxdb_client is None:
         return None
     
@@ -234,6 +268,8 @@ def query_latest_telemetry_from_influxdb() -> dict | None:
                 }
     except Exception as e:
         print(f"[!] InfluxDB query error: {e}")
+        influxdb_write_api = None
+        influxdb_client = None
     
     return None
 
@@ -303,7 +339,7 @@ def get_campus_data() -> dict:
     
     # Record alert
     alert_log = {
-        "timestamp": datetime.utcnow().isoformat(),
+        "timestamp": datetime.now(UTC).isoformat(),
         "alert": telemetry["alert"],
         "temperature": telemetry["temperature"],
         "occupancy": telemetry["occupancy"],
@@ -325,8 +361,8 @@ def get_campus_data() -> dict:
         "alerts": state.get_alerts(),
         "system_health": {
             "status": state.system_status,
-            "timestamp": datetime.utcnow().isoformat(),
-            "uptime_seconds": (datetime.utcnow() - datetime.fromisoformat(state.system_start_time)).total_seconds(),
+            "timestamp": datetime.now(UTC).isoformat(),
+            "uptime_seconds": (datetime.now(UTC) - datetime.fromisoformat(state.system_start_time)).total_seconds(),
         },
         "database_status": {
             "influxdb": "connected" if influxdb_client else "disconnected",
@@ -405,6 +441,6 @@ def health() -> dict:
     request_counter.labels(endpoint="health").inc()
     return {
         "status": state.system_status,
-        "timestamp": datetime.utcnow().isoformat(),
+        "timestamp": datetime.now(UTC).isoformat(),
         "version": "2.0.0",
     }
