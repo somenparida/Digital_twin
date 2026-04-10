@@ -179,27 +179,7 @@ jobs:
                   sudo wget -O /usr/local/bin/docker-compose "https://github.com/docker/compose/releases/download/v2.24.0/docker-compose-linux-x86_64"
                 fi
                 sudo chmod +x /usr/local/bin/docker-compose
-              fiOpenSSH_for_Windows_9.5p2, LibreSSL 3.8.2
-debug3: Failed to open file:C:/Users/somen/.ssh/config error:2
-debug3: Failed to open file:C:/ProgramData/ssh/ssh_config error:2
-debug2: resolve_canonicalize: hostname 65.0.72.197 is address
-debug3: expanded UserKnownHostsFile '~/.ssh/known_hosts' -> 'C:\\Users\\somen/.ssh/known_hosts'
-debug3: expanded UserKnownHostsFile '~/.ssh/known_hosts2' -> 'C:\\Users\\somen/.ssh/known_hosts2'
-debug3: ssh_connect_direct: entering
-debug1: Connecting to 65.0.72.197 [65.0.72.197] port 22.
-debug2: fd 3 setting O_NONBLOCK
-debug1: fd 3 clearing O_NONBLOCK
-debug1: Connection established.
-debug3: timeout: 9917 ms remain after connect
-debug3: Failed to open file:C:/Users/somen/Downloads/my-key.pem.pub error:2
-debug1: identity file C:\\Users\\somen\\Downloads\\my-key.pem type -1
-debug3: Failed to open file:C:/Users/somen/Downloads/my-key.pem-cert error:2
-debug3: Failed to open file:C:/Users/somen/Downloads/my-key.pem-cert.pub error:2
-debug3: failed to open file:C:/Users/somen/Downloads/my-key.pem-cert error:2
-debug1: identity file C:\\Users\\somen\\Downloads\\my-key.pem-cert type -1
-debug1: Local version string SSH-2.0-OpenSSH_for_Windows_9.5
-Connection timed out during banner exchange
-Connection to 65.0.72.197 port 22 timed out
+              fi
               COMPOSE_CMD="sudo docker-compose"
             else
               COMPOSE_CMD="sudo docker compose"
