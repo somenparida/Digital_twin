@@ -24,9 +24,10 @@ export type SensorDataActions = {
 };
 
 const MAX_SAMPLES = 40; // Sliding window size
-const POLL_MS = 1000; // 1 second polling
+const POLL_MS = 2000; // 2 second polling to reduce backend pressure on small instances
 const LATENCY_MIN = 10;
 const LATENCY_MAX = 45;
+const MAX_TRANSIENT_FAILURES = 2;
 
 /**
  * Custom hook for managing sensor data with sliding window optimization
@@ -43,6 +44,7 @@ export function useSensorData(): SensorDataState & SensorDataActions {
 
   const previousAlertRef = useRef<string | null>(null);
   const startTimeRef = useRef<number>(Date.now());
+  const consecutiveFailuresRef = useRef<number>(0);
 
   /**
    * Load campus data from API and update sliding window history
@@ -51,6 +53,7 @@ export function useSensorData(): SensorDataState & SensorDataActions {
     try {
       const next = await fetchCampusData();
       setData(next);
+      consecutiveFailuresRef.current = 0;
       setError(null);
       setCurrentMode(next.mode);
 
@@ -77,7 +80,10 @@ export function useSensorData(): SensorDataState & SensorDataActions {
 
       previousAlertRef.current = next.alert;
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Failed to load data');
+      consecutiveFailuresRef.current += 1;
+      if (consecutiveFailuresRef.current >= MAX_TRANSIENT_FAILURES) {
+        setError(e instanceof Error ? e.message : 'Failed to load data');
+      }
     } finally {
       setLoading(false);
     }

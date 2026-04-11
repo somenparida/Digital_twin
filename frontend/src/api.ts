@@ -6,6 +6,7 @@ export const DATA_URL = "/api/data";
 export const MODE_URL = "/api/mode";
 export const ALERTS_URL = "/api/alerts";
 const API_TIMEOUT_MS = 5000;
+const RETRY_DELAY_MS = 600;
 
 export type SimulationMode = "normal" | "warning" | "critical";
 
@@ -53,15 +54,40 @@ async function fetchWithTimeout(input: RequestInfo | URL, init: RequestInit = {}
   }
 }
 
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
+}
+
 /**
  * Fetch current campus data.
  */
 export async function fetchCampusData(): Promise<CampusPayload> {
-  const res = await fetchWithTimeout(DATA_URL);
-  if (!res.ok) {
-    throw new Error(`API error: ${res.status}`);
+  let lastError: Error | null = null;
+
+  for (let attempt = 1; attempt <= 2; attempt += 1) {
+    try {
+      const res = await fetchWithTimeout(DATA_URL);
+      if (res.ok) {
+        return res.json() as Promise<CampusPayload>;
+      }
+
+      // Retry once for transient server/proxy failures.
+      if (res.status >= 500 && attempt < 2) {
+        await sleep(RETRY_DELAY_MS);
+        continue;
+      }
+
+      throw new Error(`API error: ${res.status}`);
+    } catch (error) {
+      lastError = error instanceof Error ? error : new Error("Failed to fetch data");
+      if (attempt < 2) {
+        await sleep(RETRY_DELAY_MS);
+        continue;
+      }
+    }
   }
-  return res.json() as Promise<CampusPayload>;
+
+  throw lastError ?? new Error("Failed to fetch data");
 }
 
 /**
