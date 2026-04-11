@@ -1,4 +1,4 @@
-name: Deploy — GHCR and EC2
+name: Deploy - GHCR and EC2
 
 on:
   workflow_dispatch:
@@ -56,7 +56,8 @@ jobs:
 
       - name: Skip deploy when EC2 secrets are missing
         if: ${{ env.EC2_HOST == '' || env.EC2_SSH_KEY == '' }}
-        run: echo "Skipping EC2 deploy: set EC2_HOST and EC2_SSH_KEY repository secrets to enable deployment."
+        run: |
+          echo "Skipping EC2 deploy: set EC2_HOST and EC2_SSH_KEY repository secrets to enable deployment."
 
       - name: Prepare SSH private key
         if: ${{ env.EC2_HOST != '' && env.EC2_SSH_KEY != '' }}
