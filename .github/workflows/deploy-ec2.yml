@@ -1,0 +1,183 @@
+name: Deploy — GHCR and EC2
+
+on:
+  workflow_dispatch:
+
+env:
+  IMAGE_BACKEND: digital-twin-devops-backend
+  IMAGE_FRONTEND: digital-twin-devops-frontend
+  REGISTRY: ghcr.io
+
+jobs:
+  deploy-images:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push backend image
+        uses: docker/build-push-action@v6
+        with:
+          context: ./backend
+          file: ./backend/Dockerfile
+          push: true
+          tags: ${{ env.REGISTRY }}/${{ github.repository_owner }}/${{ env.IMAGE_BACKEND }}:latest
+
+      - name: Build and push frontend image
+        uses: docker/build-push-action@v6
+        with:
+          context: ./frontend
+          file: ./frontend/Dockerfile
+          push: true
+          tags: ${{ env.REGISTRY }}/${{ github.repository_owner }}/${{ env.IMAGE_FRONTEND }}:latest
+
+  deploy-to-ec2:
+    needs: [deploy-images]
+    runs-on: ubuntu-latest
+    env:
+      EC2_HOST: ${{ secrets.EC2_HOST }}
+      EC2_SSH_KEY: ${{ secrets.EC2_SSH_KEY }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Skip deploy when EC2 secrets are missing
+        if: ${{ env.EC2_HOST == '' || env.EC2_SSH_KEY == '' }}
+        run: echo "Skipping EC2 deploy: set EC2_HOST and EC2_SSH_KEY repository secrets to enable deployment."
+
+      - name: Prepare SSH private key
+        if: ${{ env.EC2_HOST != '' && env.EC2_SSH_KEY != '' }}
+        shell: bash
+        run: |
+          printf '%b' "$EC2_SSH_KEY" > /tmp/deploy_key
+          chmod 600 /tmp/deploy_key
+          ssh-keygen -y -f /tmp/deploy_key >/dev/null
+
+      - name: Preflight SSH connectivity check
+        id: preflight
+        if: ${{ env.EC2_HOST != '' && env.EC2_SSH_KEY != '' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          ok=0
+          for i in $(seq 1 12); do
+            if timeout 10 bash -c "cat < /dev/null > /dev/tcp/$EC2_HOST/22"; then
+              if ssh -i /tmp/deploy_key \
+                -o BatchMode=yes \
+                -o StrictHostKeyChecking=no \
+                -o UserKnownHostsFile=/dev/null \
+                -o ConnectTimeout=10 \
+                ec2-user@$EC2_HOST 'echo SSH_OK'; then
+                ok=1
+                break
+              fi
+            fi
+            echo "Attempt $i/12: EC2 SSH not reachable yet, retrying in 10s..."
+            sleep 10
+          done
+
+          if [ "$ok" -eq 1 ]; then
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::Preflight failed: cannot reach ec2-user@$EC2_HOST:22 from GitHub runner; skipping EC2 deploy in this run."
+          fi
+
+      - name: Skip deploy when EC2 is unreachable
+        if: ${{ env.EC2_HOST != '' && env.EC2_SSH_KEY != '' && steps.preflight.outputs.ready != 'true' }}
+        run: |
+          echo "EC2 deploy skipped because SSH preflight did not succeed."
+          echo "Check EC2_HOST, Security Group port 22, and instance SSH service."
+
+      - name: Deploy to EC2 via SSH
+        if: ${{ env.EC2_HOST != '' && env.EC2_SSH_KEY != '' && steps.preflight.outputs.ready == 'true' }}
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ env.EC2_HOST }}
+          username: ec2-user
+          key_path: /tmp/deploy_key
+          port: 22
+          timeout: 30s
+          command_timeout: 20m
+          script_stop: true
+          script: |
+            set -euo pipefail
+            PROJECT_DIR="/home/ec2-user/Digital_twin"
+
+            check_http_ok() {
+              local url="$1"
+              if command -v curl >/dev/null 2>&1; then
+                curl -fsS --max-time 15 "$url" >/dev/null
+              elif command -v wget >/dev/null 2>&1; then
+                wget -q -O /dev/null "$url"
+              else
+                return 1
+              fi
+            }
+
+            if ! command -v git >/dev/null 2>&1; then
+              sudo dnf install -y git
+            fi
+            if ! command -v docker >/dev/null 2>&1; then
+              sudo dnf install -y docker
+            fi
+            sudo systemctl enable --now docker
+
+            if ! sudo docker compose version >/dev/null 2>&1; then
+              if ! command -v docker-compose >/dev/null 2>&1; then
+                if command -v curl >/dev/null 2>&1; then
+                  sudo curl -L "https://github.com/docker/compose/releases/download/v2.24.0/docker-compose-linux-x86_64" -o /usr/local/bin/docker-compose
+                elif command -v wget >/dev/null 2>&1; then
+                  sudo wget -O /usr/local/bin/docker-compose "https://github.com/docker/compose/releases/download/v2.24.0/docker-compose-linux-x86_64"
+                else
+                  sudo dnf install -y wget curl-minimal
+                  sudo wget -O /usr/local/bin/docker-compose "https://github.com/docker/compose/releases/download/v2.24.0/docker-compose-linux-x86_64"
+                fi
+                sudo chmod +x /usr/local/bin/docker-compose
+              fi
+              COMPOSE_CMD="sudo docker-compose"
+            else
+              COMPOSE_CMD="sudo docker compose"
+            fi
+
+            if [ ! -d "$PROJECT_DIR/.git" ]; then
+              git clone https://github.com/${{ github.repository }}.git "$PROJECT_DIR"
+            fi
+            cd "$PROJECT_DIR"
+            git fetch origin main
+            git checkout main
+            git reset --hard origin/main
+
+            $COMPOSE_CMD up -d --build --remove-orphans backend frontend
+
+            ok=0
+            for i in $(seq 1 24); do
+              if check_http_ok "http://127.0.0.1:8000/health" && check_http_ok "http://127.0.0.1:3000/api/data"; then
+                ok=1
+                break
+              fi
+              sleep 5
+            done
+
+            if [ "$ok" -ne 1 ]; then
+              echo "Deployment failed: services did not become healthy in time"
+              $COMPOSE_CMD ps || true
+              $COMPOSE_CMD logs --tail=200 backend || true
+              $COMPOSE_CMD logs --tail=120 frontend || true
+              exit 1
+            fi
+
+            $COMPOSE_CMD ps
