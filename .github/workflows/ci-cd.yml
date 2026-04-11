@@ -172,8 +172,19 @@ jobs:
           command_timeout: 20m
           script_stop: true
           script: |
-            set -e
+            set -euo pipefail
             PROJECT_DIR="/home/ec2-user/Digital_twin"
+
+            check_http_ok() {
+              local url="$1"
+              if command -v curl >/dev/null 2>&1; then
+                curl -fsS --max-time 15 "$url" >/dev/null
+              elif command -v wget >/dev/null 2>&1; then
+                wget -q -O /dev/null "$url"
+              else
+                return 1
+              fi
+            }
 
             # Bootstrap prerequisites on fresh Amazon Linux hosts.
             if ! command -v git >/dev/null 2>&1; then
@@ -192,7 +203,7 @@ jobs:
                 elif command -v wget >/dev/null 2>&1; then
                   sudo wget -O /usr/local/bin/docker-compose "https://github.com/docker/compose/releases/download/v2.24.0/docker-compose-linux-x86_64"
                 else
-                  sudo dnf install -y wget
+                  sudo dnf install -y wget curl-minimal
                   sudo wget -O /usr/local/bin/docker-compose "https://github.com/docker/compose/releases/download/v2.24.0/docker-compose-linux-x86_64"
                 fi
                 sudo chmod +x /usr/local/bin/docker-compose
@@ -207,13 +218,30 @@ jobs:
               git clone https://github.com/${{ github.repository }}.git "$PROJECT_DIR"
             fi
             cd "$PROJECT_DIR"
-            git pull origin main
+            git fetch origin main
+            git checkout main
+            git reset --hard origin/main
 
             # Rebuild and restart only app services on EC2.
             # This avoids brittle image rewrites and keeps t2.micro footprint manageable.
             $COMPOSE_CMD up -d --build --remove-orphans backend frontend
 
             # Verify runtime health before marking deploy successful.
-            curl -fsS --max-time 15 http://127.0.0.1:8000/health >/dev/null
-            curl -fsS --max-time 15 http://127.0.0.1:3000/api/data >/dev/null
+            ok=0
+            for i in $(seq 1 24); do
+              if check_http_ok "http://127.0.0.1:8000/health" && check_http_ok "http://127.0.0.1:3000/api/data"; then
+                ok=1
+                break
+              fi
+              sleep 5
+            done
+
+            if [ "$ok" -ne 1 ]; then
+              echo "Deployment failed: services did not become healthy in time"
+              $COMPOSE_CMD ps || true
+              $COMPOSE_CMD logs --tail=200 backend || true
+              $COMPOSE_CMD logs --tail=120 frontend || true
+              exit 1
+            fi
+
             $COMPOSE_CMD ps

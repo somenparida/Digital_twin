@@ -5,6 +5,7 @@
 export const DATA_URL = "/api/data";
 export const MODE_URL = "/api/mode";
 export const ALERTS_URL = "/api/alerts";
+const API_TIMEOUT_MS = 5000;
 
 export type SimulationMode = "normal" | "warning" | "critical";
 
@@ -37,11 +38,26 @@ export type AlertsResponse = {
   total_count: number;
 };
 
+async function fetchWithTimeout(input: RequestInfo | URL, init: RequestInit = {}, timeoutMs = API_TIMEOUT_MS): Promise<Response> {
+  const controller = new AbortController();
+  const timer = window.setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(input, { ...init, signal: controller.signal });
+  } catch (error) {
+    if (error instanceof DOMException && error.name === "AbortError") {
+      throw new Error(`API timeout after ${timeoutMs}ms`);
+    }
+    throw error;
+  } finally {
+    window.clearTimeout(timer);
+  }
+}
+
 /**
  * Fetch current campus data.
  */
 export async function fetchCampusData(): Promise<CampusPayload> {
-  const res = await fetch(DATA_URL);
+  const res = await fetchWithTimeout(DATA_URL);
   if (!res.ok) {
     throw new Error(`API error: ${res.status}`);
   }
@@ -52,7 +68,7 @@ export async function fetchCampusData(): Promise<CampusPayload> {
  * Set the simulation mode (normal, warning, critical).
  */
 export async function setSimulationMode(mode: SimulationMode): Promise<{ mode: SimulationMode; message: string }> {
-  const res = await fetch(`${MODE_URL}/${mode}`, {
+  const res = await fetchWithTimeout(`${MODE_URL}/${mode}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
   });
@@ -66,7 +82,7 @@ export async function setSimulationMode(mode: SimulationMode): Promise<{ mode: S
  * Fetch alert history.
  */
 export async function fetchAlerts(): Promise<AlertsResponse> {
-  const res = await fetch(ALERTS_URL);
+  const res = await fetchWithTimeout(ALERTS_URL);
   if (!res.ok) {
     throw new Error(`API error: ${res.status}`);
   }
