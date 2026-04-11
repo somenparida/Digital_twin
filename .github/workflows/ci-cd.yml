@@ -209,11 +209,11 @@ jobs:
             cd "$PROJECT_DIR"
             git pull origin main
 
-            # Update docker-compose with latest image tags (GitHub Container Registry)
-            sed -i "s|image:.*backend.*|image: ${{ env.REGISTRY }}/${{ github.repository_owner }}/${{ env.IMAGE_BACKEND }}:latest|g" docker-compose.yml
-            sed -i "s|image:.*frontend.*|image: ${{ env.REGISTRY }}/${{ github.repository_owner }}/${{ env.IMAGE_FRONTEND }}:latest|g" docker-compose.yml
+            # Rebuild and restart only app services on EC2.
+            # This avoids brittle image rewrites and keeps t2.micro footprint manageable.
+            $COMPOSE_CMD up -d --build --remove-orphans backend frontend
 
-            # Restart services
-            $COMPOSE_CMD pull
-            $COMPOSE_CMD up -d --remove-orphans
+            # Verify runtime health before marking deploy successful.
+            curl -fsS --max-time 15 http://127.0.0.1:8000/health >/dev/null
+            curl -fsS --max-time 15 http://127.0.0.1:3000/api/data >/dev/null
             $COMPOSE_CMD ps
