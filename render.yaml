@@ -1,0 +1,39 @@
+# Render Blueprint for Campus Digital Twin
+# Deploys backend (FastAPI) + frontend (Vite static site)
+
+services:
+  - type: web
+    name: campus-digital-twin-backend
+    env: python
+    plan: free
+    rootDir: backend
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /health
+    envVars:
+      - key: PYTHONUNBUFFERED
+        value: "1"
+      # Optional DB integrations; leave defaults or override in Render dashboard
+      - key: INFLUXDB_URL
+        value: "http://influxdb:8086"
+      - key: INFLUXDB_TOKEN
+        value: "my-admin-token"
+      - key: INFLUXDB_ORG
+        value: "myorg"
+      - key: INFLUXDB_BUCKET
+        value: "sensors"
+      - key: MONGODB_URL
+        value: "mongodb://admin:changeme@mongodb:27017/"
+      - key: MONGODB_DB
+        value: "digital_twin"
+
+staticSites:
+  - name: campus-digital-twin-frontend
+    rootDir: frontend
+    buildCommand: npm install && npm run build
+    publishPath: dist
+    envVars:
+      # After first backend deploy, set this in Render UI to your backend public URL
+      # Example: https://campus-digital-twin-backend.onrender.com
+      - key: VITE_API_BASE_URL
+        value: "https://campus-digital-twin-backend.onrender.com"

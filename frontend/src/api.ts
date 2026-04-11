@@ -2,9 +2,10 @@
  * API base: in production (Docker/K8s) nginx proxies /api → backend.
  * In Vite dev, vite.config.ts proxies /api to localhost:8000.
  */
-export const DATA_URL = "/api/data";
-export const MODE_URL = "/api/mode";
-export const ALERTS_URL = "/api/alerts";
+const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || "/api").replace(/\/+$/, "");
+export const DATA_URL = `${API_BASE_URL}/data`;
+export const MODE_URL = `${API_BASE_URL}/mode`;
+export const ALERTS_URL = `${API_BASE_URL}/alerts`;
 const API_TIMEOUT_MS = 5000;
 const RETRY_DELAY_MS = 600;
 
