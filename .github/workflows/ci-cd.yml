@@ -146,14 +146,31 @@ jobs:
           chmod 600 /tmp/deploy_key
           ssh-keygen -y -f /tmp/deploy_key >/dev/null
 
+      - name: Preflight SSH connectivity check
+        if: ${{ env.EC2_HOST != '' && env.EC2_SSH_KEY != '' }}
+        shell: bash
+        run: |
+          set -e
+          # Validate TCP reachability before invoking deployment action.
+          timeout 20 bash -c "cat < /dev/null > /dev/tcp/$EC2_HOST/22"
+          ssh -i /tmp/deploy_key \
+            -o BatchMode=yes \
+            -o StrictHostKeyChecking=no \
+            -o UserKnownHostsFile=/dev/null \
+            -o ConnectTimeout=15 \
+            ec2-user@$EC2_HOST 'echo SSH_OK'
+
       - name: Deploy to EC2 via SSH
         if: ${{ env.EC2_HOST != '' && env.EC2_SSH_KEY != '' }}
-        uses: appleboy/ssh-action@master
+        uses: appleboy/ssh-action@v1.2.0
         with:
           host: ${{ env.EC2_HOST }}
           username: ec2-user
           key_path: /tmp/deploy_key
           port: 22
+          timeout: 30s
+          command_timeout: 20m
+          script_stop: true
           script: |
             set -e
             PROJECT_DIR="/home/ec2-user/Digital_twin"
