@@ -1,5 +1,5 @@
 fastapi==0.115.6
-uvicorn[standard]==0.32.1
+uvicorn[standard]==0.44.0
 prometheus-client==0.20.0
 influxdb-client==1.45.0
 pymongo==4.6.1
